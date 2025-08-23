@@ -3,7 +3,13 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun --hot run index.ts",
+    "format": "biome format --write"
+  },
   "devDependencies": {
+    "@biomejs/biome": "2.2.0",
     "@types/bun": "latest"
   },
   "peerDependencies": {
