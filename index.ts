@@ -2,7 +2,10 @@ import {
   Client,
   Events,
   GatewayIntentBits,
-  AttachmentBuilder
+  AttachmentBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
 } from 'discord.js'
 import { startTyping } from './lib/typing.ts'
 import { fetchParkingData, formatParkingResponse } from './lib/parking.ts'
@@ -15,6 +18,18 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 })
+
+const generationContext = new Map<string, { prompt: string; imageUrl: string }>()
+
+function buildRetryRow() {
+  const retry = new ButtonBuilder()
+    .setCustomId('retry_gen')
+    .setLabel('Retry')
+    .setStyle(ButtonStyle.Primary)
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(retry)
+  return row
+}
 
 client.once(Events.ClientReady, (c) => {
   console.log(`Ready! Logged in as ${c.user.tag}`)
@@ -64,19 +79,21 @@ client.on(Events.MessageCreate, async (message) => {
         ) {
           prompt = message.content.trim()
         } else if (client.user && message.mentions.has(client.user)) {
-          const cleaned = message.content.replace(/<@!?\d+>/g, '').trim()
+          const botId = client.user.id
+          const cleaned = message.content
+            .replace(new RegExp(`^<@!?${botId}>\\s*`), '')
+            .replace(new RegExp(`\\s*<@!?${botId}>$`), '')
+            .trim()
           if (cleaned) {
             prompt = cleaned
           }
         }
 
         if (prompt) {
+          const imageUrl = referencedImageAttachment.url
           const stopTyping = startTyping(message.channel)
           try {
-            const result = await generateImage(
-              prompt,
-              referencedImageAttachment.url
-            )
+            const result = await generateImage(prompt, imageUrl)
             // Stop typing before sending the reply
             stopTyping()
 
@@ -84,7 +101,11 @@ client.on(Events.MessageCreate, async (message) => {
               const attachment = new AttachmentBuilder(result.value, {
                 name: 'generated-image.jpg'
               })
-              await message.reply({ files: [attachment] })
+              const sent = await message.reply({
+                files: [attachment],
+                components: [buildRetryRow()]
+              })
+              generationContext.set(sent.id, { prompt, imageUrl })
             } else {
               console.error('failed to generate image', result.error)
               await message.reply(`failed to generate: ${result.error}`)
@@ -115,7 +136,11 @@ client.on(Events.MessageCreate, async (message) => {
       return
     }
 
-    const prompt = message.content.replace(/<@!?\d+>/g, '').trim()
+    const botId = client.user!.id
+    const prompt = message.content
+      .replace(new RegExp(`^<@!?${botId}>\\s*`), '')
+      .replace(new RegExp(`\\s*<@!?${botId}>$`), '')
+      .trim()
 
     if (!prompt) {
       await message.reply('include a prompt')
@@ -124,7 +149,8 @@ client.on(Events.MessageCreate, async (message) => {
 
     const stopTyping = startTyping(message.channel)
     try {
-      const result = await generateImage(prompt, imageAttachment.url)
+      const imageUrl = imageAttachment.url
+      const result = await generateImage(prompt, imageUrl)
       // Stop typing before sending the reply
       stopTyping()
 
@@ -132,7 +158,11 @@ client.on(Events.MessageCreate, async (message) => {
         const attachment = new AttachmentBuilder(result.value, {
           name: 'generated-image.jpg'
         })
-        await message.reply({ files: [attachment] })
+        const sent = await message.reply({
+          files: [attachment],
+          components: [buildRetryRow()]
+        })
+        generationContext.set(sent.id, { prompt, imageUrl })
       } else {
         console.error('failed to generate image', result.error)
         await message.reply(`failed to generate: ${result.error}`)
@@ -144,6 +174,62 @@ client.on(Events.MessageCreate, async (message) => {
       // Ensure typing always stops even if an error occurs above
       stopTyping()
     }
+  }
+})
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isButton()) return
+  if (interaction.customId !== 'retry_gen') return
+
+  const ctx = generationContext.get(interaction.message.id)
+  if (!ctx) {
+    await interaction.reply({
+      content: 'context expired. reply to the original image with your prompt to regenerate.',
+      ephemeral: true
+    })
+    return
+  }
+
+  if (!interaction.channel) {
+    await interaction.reply({ content: 'cannot retry here', ephemeral: true })
+    return
+  }
+
+  const channel = interaction.channel
+  if (!('sendTyping' in channel) || !('send' in channel)) {
+    await interaction.reply({ content: 'cannot retry here', ephemeral: true })
+    return
+  }
+
+  const stopTyping = startTyping(channel)
+  try {
+    await interaction.deferReply({ ephemeral: true })
+    const result = await generateImage(ctx.prompt, ctx.imageUrl)
+    if (result.isOk()) {
+      const attachment = new AttachmentBuilder(result.value, {
+        name: 'generated-image.jpg'
+      })
+      const sent = await channel.send({
+        files: [attachment],
+        components: [buildRetryRow()]
+      })
+      generationContext.set(sent.id, ctx)
+      await interaction.editReply('retry complete')
+    } else {
+      console.error('failed to generate image', result.error)
+      await interaction.editReply(`failed to generate: ${result.error}`)
+    }
+  } catch (e) {
+    console.error('failed to generate image', e)
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply('failed to generate image')
+      } else {
+        await interaction.reply({ content: 'failed to generate image', ephemeral: true })
+      }
+    } catch { }
+  } finally {
+    stopTyping()
   }
 })
 
