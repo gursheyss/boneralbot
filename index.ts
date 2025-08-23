@@ -13,7 +13,19 @@ interface ParkingData {
   fullness: string
 }
 
+interface CachedData {
+  data: ParkingData[]
+  timestamp: number
+}
+
+let cache: CachedData | null = null
+const CACHE_DURATION = 60 * 1000 // 1 min
+
 async function scrapeParkingData(): Promise<ParkingData[]> {
+  if (cache && Date.now() - cache.timestamp < CACHE_DURATION) {
+    return cache.data
+  }
+
   try {
     const response = await fetch('https://sjsuparkingstatus.sjsu.edu/', {
       headers: {
@@ -42,6 +54,11 @@ async function scrapeParkingData(): Promise<ParkingData[]> {
         parkingData.push({ name, fullness: `${fullness}%` })
       }
       match = garagePattern.exec(html)
+    }
+
+    cache = {
+      data: parkingData,
+      timestamp: Date.now()
     }
 
     return parkingData
