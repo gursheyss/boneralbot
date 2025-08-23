@@ -47,24 +47,36 @@ client.on(Events.MessageCreate, async (message) => {
     return
   }
 
-  if (message.reference && message.content.trim()) {
+  if (message.reference) {
     try {
       const referencedMessage = await message.fetchReference()
 
-      if (
-        referencedMessage.author.id === client.user?.id &&
-        referencedMessage.attachments.size > 0
-      ) {
-        const imageAttachment = referencedMessage.attachments.find(
-          (attachment) => attachment.contentType?.startsWith('image/')
-        )
+      const referencedImageAttachment = referencedMessage.attachments.find(
+        (attachment) => attachment.contentType?.startsWith('image/')
+      )
 
-        if (imageAttachment) {
-          const prompt = message.content.trim()
+      if (referencedImageAttachment) {
+        let prompt: string | null = null
 
+        if (
+          referencedMessage.author.id === client.user?.id &&
+          message.content.trim()
+        ) {
+          prompt = message.content.trim()
+        } else if (client.user && message.mentions.has(client.user)) {
+          const cleaned = message.content.replace(/<@!?\d+>/g, '').trim()
+          if (cleaned) {
+            prompt = cleaned
+          }
+        }
+
+        if (prompt) {
           const stopTyping = startTyping(message.channel)
           try {
-            const result = await generateImage(prompt, imageAttachment.url)
+            const result = await generateImage(
+              prompt,
+              referencedImageAttachment.url
+            )
             // Stop typing before sending the reply
             stopTyping()
 
