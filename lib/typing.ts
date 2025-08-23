@@ -3,13 +3,30 @@ type TypingCapableChannel = {
 }
 
 export function startTyping(channel: TypingCapableChannel): () => void {
-  void channel.sendTyping()
+  let stopped = false
+  let intervalId: ReturnType<typeof setInterval>
+  let timeoutId: ReturnType<typeof setTimeout>
 
-  const interval = setInterval(() => {
+  const stop = () => {
+    if (stopped) return
+    stopped = true
+    clearInterval(intervalId)
+    clearTimeout(timeoutId)
+  }
+
+  channel.sendTyping().catch(() => {
+    stop()
+  })
+
+  intervalId = setInterval(() => {
     channel.sendTyping().catch(() => {
-      clearInterval(interval)
+      stop()
     })
   }, 8000)
 
-  return () => clearInterval(interval)
+  timeoutId = setTimeout(() => {
+    stop()
+  }, 60_000)
+
+  return stop
 }

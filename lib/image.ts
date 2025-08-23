@@ -12,10 +12,12 @@ export function generateImage(
       const input = {
         prompt: prompt,
         input_image: imageUrl,
-        output_format: 'jpg'
+        output_format: 'jpg',
+        output_quality: 100,
+        disable_safety_checker: true
       } as const
 
-      const output = await replicate.run('black-forest-labs/flux-kontext-pro', {
+      const output = await replicate.run('black-forest-labs/flux-kontext-dev', {
         input
       })
 

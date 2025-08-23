@@ -25,15 +25,24 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (message.content.toLowerCase().trim() === 'parking') {
     const stopTyping = startTyping(message.channel)
-    const result = await fetchParkingData()
-    stopTyping()
+    try {
+      const result = await fetchParkingData()
+      // Stop typing as soon as the work is done for better UX
+      stopTyping()
 
-    if (result.isOk()) {
-      const response = formatParkingResponse(result.value)
-      await message.reply(response || 'failed to get parking stats')
-    } else {
-      console.error('failed to get parking stats', result.error)
+      if (result.isOk()) {
+        const response = formatParkingResponse(result.value)
+        await message.reply(response || 'failed to get parking stats')
+      } else {
+        console.error('failed to get parking stats', result.error)
+        await message.reply('failed to get parking stats')
+      }
+    } catch (e) {
+      console.error('failed to get parking stats', e)
       await message.reply('failed to get parking stats')
+    } finally {
+      // Ensure typing always stops even if an error occurs above
+      stopTyping()
     }
     return
   }
@@ -54,17 +63,26 @@ client.on(Events.MessageCreate, async (message) => {
           const prompt = message.content.trim()
 
           const stopTyping = startTyping(message.channel)
-          const result = await generateImage(prompt, imageAttachment.url)
-          stopTyping()
+          try {
+            const result = await generateImage(prompt, imageAttachment.url)
+            // Stop typing before sending the reply
+            stopTyping()
 
-          if (result.isOk()) {
-            const attachment = new AttachmentBuilder(result.value, {
-              name: 'generated-image.jpg'
-            })
-            await message.reply({ files: [attachment] })
-          } else {
-            console.error('failed to generate image', result.error)
-            await message.reply(`failed to generate: ${result.error}`)
+            if (result.isOk()) {
+              const attachment = new AttachmentBuilder(result.value, {
+                name: 'generated-image.jpg'
+              })
+              await message.reply({ files: [attachment] })
+            } else {
+              console.error('failed to generate image', result.error)
+              await message.reply(`failed to generate: ${result.error}`)
+            }
+          } catch (e) {
+            console.error('failed to generate image', e)
+            await message.reply('failed to generate image')
+          } finally {
+            // Ensure typing always stops even if an error occurs above
+            stopTyping()
           }
           return
         }
@@ -93,17 +111,26 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     const stopTyping = startTyping(message.channel)
-    const result = await generateImage(prompt, imageAttachment.url)
-    stopTyping()
+    try {
+      const result = await generateImage(prompt, imageAttachment.url)
+      // Stop typing before sending the reply
+      stopTyping()
 
-    if (result.isOk()) {
-      const attachment = new AttachmentBuilder(result.value, {
-        name: 'generated-image.jpg'
-      })
-      await message.reply({ files: [attachment] })
-    } else {
-      console.error('failed to generate image', result.error)
-      await message.reply(`failed to generate: ${result.error}`)
+      if (result.isOk()) {
+        const attachment = new AttachmentBuilder(result.value, {
+          name: 'generated-image.jpg'
+        })
+        await message.reply({ files: [attachment] })
+      } else {
+        console.error('failed to generate image', result.error)
+        await message.reply(`failed to generate: ${result.error}`)
+      }
+    } catch (e) {
+      console.error('failed to generate image', e)
+      await message.reply('failed to generate image')
+    } finally {
+      // Ensure typing always stops even if an error occurs above
+      stopTyping()
     }
   }
 })
