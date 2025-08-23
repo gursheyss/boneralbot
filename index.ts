@@ -1,4 +1,11 @@
-import { Client, Events, GatewayIntentBits } from 'discord.js'
+import {
+  Client,
+  Events,
+  GatewayIntentBits,
+  AttachmentBuilder
+} from 'discord.js'
+
+import Replicate from 'replicate'
 
 const client = new Client({
   intents: [
@@ -7,6 +14,10 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 })
+
+const replicate = new Replicate()
+
+let isGeneratingImage = false
 
 interface ParkingData {
   name: string
@@ -72,6 +83,25 @@ function formatParkingResponse(data: ParkingData[]): string {
   return data.map((garage) => `${garage.name} ${garage.fullness}`).join('\n')
 }
 
+async function generateImage(
+  prompt: string,
+  imageUrl: string
+): Promise<Buffer> {
+  const input = {
+    prompt: prompt,
+    input_image: imageUrl,
+    output_format: 'jpg'
+  }
+
+  const output = await replicate.run('black-forest-labs/flux-kontext-pro', {
+    input
+  })
+
+  // @ts-expect-error - yes it does
+  const imageResponse = await fetch(output.url())
+  return Buffer.from(await imageResponse.arrayBuffer())
+}
+
 client.once(Events.ClientReady, (c) => {
   console.log(`Ready! Logged in as ${c.user.tag}`)
 })
@@ -93,6 +123,59 @@ client.on(Events.MessageCreate, async (message) => {
     } catch (error) {
       console.error('failed to get parking stats', error)
       await message.reply('failed to get parking stats')
+    }
+    return
+  }
+
+  // biome-ignore lint/style/noNonNullAssertion: lameeee
+  if (message.mentions.has(client.user!) && message.attachments.size > 0) {
+    if (isGeneratingImage) {
+      await message.reply('already generating')
+      return
+    }
+
+    const imageAttachment = message.attachments.find((attachment) =>
+      attachment.contentType?.startsWith('image/')
+    )
+
+    if (!imageAttachment) {
+      await message.reply('attach an image')
+      return
+    }
+
+    const prompt = message.content.replace(/<@!?\d+>/g, '').trim()
+
+    if (!prompt) {
+      await message.reply('include a prompt')
+      return
+    }
+
+    try {
+      isGeneratingImage = true
+
+      await message.channel.sendTyping()
+
+      const typingInterval = setInterval(() => {
+        message.channel.sendTyping().catch(() => {
+          clearInterval(typingInterval)
+        })
+      }, 8000)
+
+      const imageBuffer = await generateImage(prompt, imageAttachment.url)
+
+      clearInterval(typingInterval)
+
+      const attachment = new AttachmentBuilder(imageBuffer, {
+        name: 'generated-image.jpg'
+      })
+      await message.reply({
+        files: [attachment]
+      })
+    } catch (error) {
+      console.error('failed to generate image', error)
+      await message.reply(`failed to generate: ${error}`)
+    } finally {
+      isGeneratingImage = false
     }
   }
 })
