@@ -36,17 +36,21 @@ export async function fetchParkingData(): Promise<
     const html = await response.text()
 
     const garagePattern =
-      /<h2 class="garage__name">([^<]+)<\/h2>[\s\S]*?<span class="garage__fullness">\s*(\d+)\s*%\s*<\/span>/g
+      /<h2 class="garage__name">([^<]+)<\/h2>[\s\S]*?<span class="garage__fullness">\s*((?:\d+\s*%|Full))\s*<\/span>/g
     const parkingData: ParkingData[] = []
 
     let match: RegExpExecArray | null
     match = garagePattern.exec(html)
     while (match !== null) {
-      const name = match[1]?.trim().replace(' Garage', '').trim()
-      const fullness = match[2]?.trim()
+      const rawName = match[1]?.trim()
+      const rawFullness = match[2]?.trim()
 
-      if (name && fullness) {
-        parkingData.push({ name, fullness: `${fullness}%` })
+      if (rawName && rawFullness) {
+        const name = rawName.replace(/\s+Garage\s*$/, '').trim()
+
+        const fullness = rawFullness.toLowerCase() === 'full' ? '100%' : rawFullness
+
+        parkingData.push({ name, fullness })
       }
       match = garagePattern.exec(html)
     }
