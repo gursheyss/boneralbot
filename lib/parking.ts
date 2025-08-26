@@ -1,13 +1,20 @@
 import { ok, err } from 'neverthrow'
 import type { Result } from 'neverthrow'
+import * as cheerio from 'cheerio'
 
 export type ParkingData = {
   name: string
   fullness: string
 }
 
+export type ParkingResponse = {
+  data: ParkingData[]
+  websiteTimestamp: string
+}
+
 interface CachedData {
   data: ParkingData[]
+  websiteTimestamp: string
   timestamp: number
 }
 
@@ -15,10 +22,10 @@ const CACHE_DURATION_MS = 60_000
 let cache: CachedData | null = null
 
 export async function fetchParkingData(): Promise<
-  Result<ParkingData[], Error>
+  Result<ParkingResponse, Error>
 > {
   if (cache && Date.now() - cache.timestamp < CACHE_DURATION_MS) {
-    return ok(cache.data)
+    return ok({ data: cache.data, websiteTimestamp: cache.websiteTimestamp })
   }
 
   try {
@@ -34,29 +41,40 @@ export async function fetchParkingData(): Promise<
     }
 
     const html = await response.text()
+    const $ = cheerio.load(html)
 
-    const garagePattern =
-      /<h2 class="garage__name">([^<]+)<\/h2>[\s\S]*?<span class="garage__fullness">\s*((?:\d+\s*%|Full))\s*<\/span>/g
+    // Extract website timestamp
+    const timestampText = $('p.timestamp').text()
+    const websiteTimestamp = timestampText.replace(/Last updated\s*/i, '').replace(/\s*Refresh\s*$/i, '').trim() || 'Unknown'
+
+    // Extract parking data
     const parkingData: ParkingData[] = []
-
-    let match: RegExpExecArray | null
-    match = garagePattern.exec(html)
-    while (match !== null) {
-      const rawName = match[1]?.trim()
-      const rawFullness = match[2]?.trim()
-
-      if (rawName && rawFullness) {
-        const name = rawName.replace(/\s+Garage\s*$/, '').trim()
-
-        const fullness = rawFullness.toLowerCase() === 'full' ? '100%' : rawFullness
-
+    
+    // Parse garage data - find each h2 and its corresponding span
+    $('.garage h2.garage__name').each((index, element) => {
+      const $nameElement = $(element)
+      const name = $nameElement.text().replace(/\s+Garage\s*$/, '').trim()
+      
+      // Find the corresponding fullness span in the next p element
+      const $nextP = $nameElement.next('p.garage__text')
+      const rawFullness = $nextP.find('span.garage__fullness').text().trim()
+      
+      if (name && rawFullness) {
+        let fullness = rawFullness.toLowerCase() === 'full' ? '100%' : rawFullness
+        // Clean up the percentage (remove extra spaces)
+        fullness = fullness.replace(/\s+/g, '').trim()
+        
+        // Ensure it has % if it's a number
+        if (!fullness.includes('%') && !isNaN(parseInt(fullness))) {
+          fullness = fullness + '%'
+        }
+        
         parkingData.push({ name, fullness })
       }
-      match = garagePattern.exec(html)
-    }
+    })
 
-    cache = { data: parkingData, timestamp: Date.now() }
-    return ok(parkingData)
+    cache = { data: parkingData, websiteTimestamp, timestamp: Date.now() }
+    return ok({ data: parkingData, websiteTimestamp })
   } catch (e) {
     const error = e instanceof Error ? e : new Error('Unknown error')
     return err(error)
@@ -67,7 +85,9 @@ export function formatParkingResponse(data: ParkingData[]): string {
   return data.map((garage) => `${garage.name} ${garage.fullness}`).join('\n')
 }
 
-export function createTextChart(data: ParkingData[]): string {
+export function createTextChart(data: ParkingData[], websiteTimestamp: string): string {
+  if (data.length === 0) return 'No parking data available'
+  
   const maxNameLength = Math.max(...data.map(d => d.name.length))
   const chart = data.map((garage) => {
     const fullness = parseInt(garage.fullness.replace('%', ''))
@@ -77,5 +97,29 @@ export function createTextChart(data: ParkingData[]): string {
     return `${paddedName} ${bar} ${garage.fullness}`
   }).join('\n')
 
-  return `SJSU Parking Garage Status\n${'='.repeat(50)}\n${chart}`
+  // Format timestamp to PST
+  const formatTimestamp = (timestamp: string) => {
+    if (timestamp === 'Unknown') return 'Unknown'
+    try {
+      // Handle the format "2025-8-26 12:25:00 PM"
+      const date = new Date(timestamp)
+      if (isNaN(date.getTime())) {
+        return timestamp // Return original if parsing fails
+      }
+      return date.toLocaleString('en-US', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      })
+    } catch {
+      return timestamp
+    }
+  }
+
+  return `SJSU Parking Garage Status\n${'='.repeat(50)}\n${chart}\n\nWebsite last updated: ${formatTimestamp(websiteTimestamp)} PST`
 }
