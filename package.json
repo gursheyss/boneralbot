@@ -16,6 +16,8 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@types/cheerio": "^1.0.0",
+    "cheerio": "^1.1.2",
     "discord.js": "^14.22.1",
     "neverthrow": "^8.2.0",
     "replicate": "^1.1.0"
