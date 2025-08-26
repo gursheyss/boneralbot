@@ -2,6 +2,7 @@ import { ok, err } from 'neverthrow'
 import type { Result } from 'neverthrow'
 import * as cheerio from 'cheerio'
 import { formatDistanceToNow } from 'date-fns'
+import { fromZonedTime } from 'date-fns-tz'
 
 export type ParkingData = {
   name: string
@@ -115,14 +116,20 @@ export function createTextChart(
   const formatTimestamp = (timestamp: string) => {
     if (timestamp === 'Unknown') return 'Unknown'
     try {
-      // The scraped timestamp is already in PST, so parse it directly
+      // The scraped timestamp is in PST format: "2025-8-26 1:01:00 PM"
+      // We need to explicitly parse it as PST, then convert to UTC for accurate comparison
       const date = new Date(timestamp)
 
       if (Number.isNaN(date.getTime())) {
         return timestamp
       }
 
-      const relativeTime = formatDistanceToNow(date, { addSuffix: true })
+      // Convert from PST to UTC so formatDistanceToNow works correctly
+      // Since the original timestamp is in PST, we treat it as such
+      const pstTimeZone = 'America/Los_Angeles'
+      const utcDate = fromZonedTime(date, pstTimeZone)
+
+      const relativeTime = formatDistanceToNow(utcDate, { addSuffix: true })
 
       return relativeTime
     } catch {
