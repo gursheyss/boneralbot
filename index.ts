@@ -1,3 +1,5 @@
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 import {
   Client,
   Events,
@@ -8,7 +10,7 @@ import {
   ButtonStyle
 } from 'discord.js'
 import { startTyping } from './lib/typing.ts'
-import { fetchParkingData, formatParkingResponse } from './lib/parking.ts'
+import { fetchParkingData, createTextChart } from './lib/parking.ts'
 import { generateImage } from './lib/image.ts'
 
 const client = new Client({
@@ -46,8 +48,8 @@ client.on(Events.MessageCreate, async (message) => {
       stopTyping()
 
       if (result.isOk()) {
-        const response = formatParkingResponse(result.value)
-        await message.reply(response || 'failed to get parking stats')
+        const chart = createTextChart(result.value)
+        await message.reply("```\n" + chart + "\n```")
       } else {
         console.error('failed to get parking stats', result.error)
         await message.reply('failed to get parking stats')

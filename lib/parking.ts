@@ -66,3 +66,16 @@ export async function fetchParkingData(): Promise<
 export function formatParkingResponse(data: ParkingData[]): string {
   return data.map((garage) => `${garage.name} ${garage.fullness}`).join('\n')
 }
+
+export function createTextChart(data: ParkingData[]): string {
+  const maxNameLength = Math.max(...data.map(d => d.name.length))
+  const chart = data.map((garage) => {
+    const fullness = parseInt(garage.fullness.replace('%', ''))
+    const barLength = Math.floor(fullness / 5)
+    const bar = '█'.repeat(barLength) + '░'.repeat(20 - barLength)
+    const paddedName = garage.name.padEnd(maxNameLength + 2)
+    return `${paddedName} ${bar} ${garage.fullness}`
+  }).join('\n')
+
+  return `SJSU Parking Garage Status\n${'='.repeat(50)}\n${chart}`
+}
