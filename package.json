@@ -18,6 +18,8 @@
   "dependencies": {
     "@types/cheerio": "^1.0.0",
     "cheerio": "^1.1.2",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
     "discord.js": "^14.22.1",
     "neverthrow": "^8.2.0",
     "replicate": "^1.1.0"

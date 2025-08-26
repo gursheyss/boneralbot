@@ -1,6 +1,8 @@
 import { ok, err } from 'neverthrow'
 import type { Result } from 'neverthrow'
 import * as cheerio from 'cheerio'
+import { formatDistanceToNow } from 'date-fns'
+import { toZonedTime } from 'date-fns-tz'
 
 export type ParkingData = {
   name: string
@@ -45,30 +47,38 @@ export async function fetchParkingData(): Promise<
 
     // Extract website timestamp
     const timestampText = $('p.timestamp').text()
-    const websiteTimestamp = timestampText.replace(/Last updated\s*/i, '').replace(/\s*Refresh\s*$/i, '').trim() || 'Unknown'
+    const websiteTimestamp =
+      timestampText
+        .replace(/Last updated\s*/i, '')
+        .replace(/\s*Refresh\s*$/i, '')
+        .trim() || 'Unknown'
 
     // Extract parking data
     const parkingData: ParkingData[] = []
-    
+
     // Parse garage data - find each h2 and its corresponding span
     $('.garage h2.garage__name').each((index, element) => {
       const $nameElement = $(element)
-      const name = $nameElement.text().replace(/\s+Garage\s*$/, '').trim()
-      
+      const name = $nameElement
+        .text()
+        .replace(/\s+Garage\s*$/, '')
+        .trim()
+
       // Find the corresponding fullness span in the next p element
       const $nextP = $nameElement.next('p.garage__text')
       const rawFullness = $nextP.find('span.garage__fullness').text().trim()
-      
+
       if (name && rawFullness) {
-        let fullness = rawFullness.toLowerCase() === 'full' ? '100%' : rawFullness
+        let fullness =
+          rawFullness.toLowerCase() === 'full' ? '100%' : rawFullness
         // Clean up the percentage (remove extra spaces)
         fullness = fullness.replace(/\s+/g, '').trim()
-        
+
         // Ensure it has % if it's a number
-        if (!fullness.includes('%') && !isNaN(parseInt(fullness))) {
+        if (!fullness.includes('%') && !Number.isNaN(parseInt(fullness))) {
           fullness = fullness + '%'
         }
-        
+
         parkingData.push({ name, fullness })
       }
     })
@@ -85,41 +95,44 @@ export function formatParkingResponse(data: ParkingData[]): string {
   return data.map((garage) => `${garage.name} ${garage.fullness}`).join('\n')
 }
 
-export function createTextChart(data: ParkingData[], websiteTimestamp: string): string {
+export function createTextChart(
+  data: ParkingData[],
+  websiteTimestamp: string
+): string {
   if (data.length === 0) return 'No parking data available'
-  
-  const maxNameLength = Math.max(...data.map(d => d.name.length))
-  const chart = data.map((garage) => {
-    const fullness = parseInt(garage.fullness.replace('%', ''))
-    const barLength = Math.floor(fullness / 5)
-    const bar = '█'.repeat(barLength) + '░'.repeat(20 - barLength)
-    const paddedName = garage.name.padEnd(maxNameLength + 2)
-    return `${paddedName} ${bar} ${garage.fullness}`
-  }).join('\n')
 
-  // Format timestamp to PST
+  const maxNameLength = Math.max(...data.map((d) => d.name.length))
+  const chart = data
+    .map((garage) => {
+      const fullness = parseInt(garage.fullness.replace('%', ''))
+      const barLength = Math.floor(fullness / 5)
+      const bar = '█'.repeat(barLength) + '░'.repeat(20 - barLength)
+      const paddedName = garage.name.padEnd(maxNameLength + 2)
+      return `${paddedName} ${bar} ${garage.fullness}`
+    })
+    .join('\n')
+
+  // Format timestamp to show relative time using date-fns
   const formatTimestamp = (timestamp: string) => {
     if (timestamp === 'Unknown') return 'Unknown'
     try {
-      // Handle the format "2025-8-26 12:25:00 PM"
       const date = new Date(timestamp)
-      if (isNaN(date.getTime())) {
-        return timestamp // Return original if parsing fails
+
+      if (Number.isNaN(date.getTime())) {
+        return timestamp
       }
-      return date.toLocaleString('en-US', {
-        timeZone: 'America/Los_Angeles',
-        year: 'numeric',
-        month: 'numeric',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: true
-      })
+
+      const pstTimeZone = 'America/Los_Angeles'
+      const zonedDate = toZonedTime(date, pstTimeZone)
+
+      // Get relative time (e.g., "5 minutes ago")
+      const relativeTime = formatDistanceToNow(zonedDate, { addSuffix: true })
+
+      return relativeTime
     } catch {
       return timestamp
     }
   }
 
-  return `SJSU Parking Garage Status\n${'='.repeat(50)}\n${chart}\n\nWebsite last updated: ${formatTimestamp(websiteTimestamp)} PST`
+  return `SJSU Parking Garage Status\n${'='.repeat(50)}\n${chart}\n\nWebsite last updated ${formatTimestamp(websiteTimestamp)}`
 }
