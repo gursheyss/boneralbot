@@ -28,7 +28,7 @@ const PARKING_DELAY = 60 * 1000 // 1 minute
 
 const generationContext = new Map<
   string,
-  { prompt: string; imageUrl: string }
+  { prompt: string; imageUrls: string[] }
 >()
 
 function buildRetryRow() {
@@ -149,11 +149,11 @@ client.on(Events.MessageCreate, async (message) => {
     try {
       const referencedMessage = await message.fetchReference()
 
-      const referencedImageAttachment = referencedMessage.attachments.find(
+      const referencedImageAttachments = referencedMessage.attachments.filter(
         (attachment) => attachment.contentType?.startsWith('image/')
       )
 
-      if (referencedImageAttachment) {
+      if (referencedImageAttachments.size > 0) {
         let prompt: string | null = null
 
         if (
@@ -173,10 +173,12 @@ client.on(Events.MessageCreate, async (message) => {
         }
 
         if (prompt) {
-          const imageUrl = referencedImageAttachment.url
+          const imageUrls = referencedImageAttachments.map(
+            (attachment) => attachment.url
+          )
           const stopTyping = startTyping(message.channel)
           try {
-            const result = await generateImage(prompt, imageUrl)
+            const result = await generateImage(prompt, imageUrls)
             // Stop typing before sending the reply
             stopTyping()
 
@@ -188,7 +190,7 @@ client.on(Events.MessageCreate, async (message) => {
                 files: [attachment],
                 components: [buildRetryRow()]
               })
-              generationContext.set(sent.id, { prompt, imageUrl })
+              generationContext.set(sent.id, { prompt, imageUrls })
             } else {
               console.error('failed to generate image', result.error)
               await message.reply(`failed to generate: ${result.error}`)
@@ -210,12 +212,12 @@ client.on(Events.MessageCreate, async (message) => {
 
   // biome-ignore lint/style/noNonNullAssertion: lameeee
   if (message.mentions.has(client.user!) && message.attachments.size > 0) {
-    const imageAttachment = message.attachments.find((attachment) =>
+    const imageAttachments = message.attachments.filter((attachment) =>
       attachment.contentType?.startsWith('image/')
     )
 
-    if (!imageAttachment) {
-      await message.reply('attach an image')
+    if (imageAttachments.size === 0) {
+      await message.reply('attach at least one image')
       return
     }
 
@@ -232,8 +234,8 @@ client.on(Events.MessageCreate, async (message) => {
 
     const stopTyping = startTyping(message.channel)
     try {
-      const imageUrl = imageAttachment.url
-      const result = await generateImage(prompt, imageUrl)
+      const imageUrls = imageAttachments.map((attachment) => attachment.url)
+      const result = await generateImage(prompt, imageUrls)
       // Stop typing before sending the reply
       stopTyping()
 
@@ -245,7 +247,7 @@ client.on(Events.MessageCreate, async (message) => {
           files: [attachment],
           components: [buildRetryRow()]
         })
-        generationContext.set(sent.id, { prompt, imageUrl })
+        generationContext.set(sent.id, { prompt, imageUrls })
       } else {
         console.error('failed to generate image', result.error)
         await message.reply(`failed to generate: ${result.error}`)
@@ -288,7 +290,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const stopTyping = startTyping(channel)
   try {
     await interaction.deferReply({ ephemeral: true })
-    const result = await generateImage(ctx.prompt, ctx.imageUrl)
+    const result = await generateImage(ctx.prompt, ctx.imageUrls)
     if (result.isOk()) {
       const attachment = new AttachmentBuilder(result.value, {
         name: 'generated-image.jpg'

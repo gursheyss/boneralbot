@@ -5,17 +5,17 @@ const replicate = new Replicate()
 
 export function generateImage(
   prompt: string,
-  imageUrl: string
+  imageUrls: string[]
 ): ResultAsync<Buffer, Error> {
   return ResultAsync.fromPromise(
     (async () => {
       const input = {
         prompt: prompt,
-        input_image: imageUrl,
+        image_input: imageUrls,
         output_format: 'jpg'
       } as const
 
-      const output = await replicate.run('google/gemini-2.5-flash-image', {
+      const output = await replicate.run('google/nano-banana', {
         input
       })
 
