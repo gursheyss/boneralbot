@@ -15,7 +15,7 @@ export function generateImage(
         output_format: 'jpg'
       } as const
 
-      const output = await replicate.run('black-forest-labs/flux-kontext-pro', {
+      const output = await replicate.run('google/gemini-2.5-flash-image', {
         input
       })
 
