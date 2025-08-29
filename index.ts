@@ -54,7 +54,7 @@ client.once(Events.ClientReady, async (c) => {
 
   let statusMessageId: string | null = null
 
-  // send initial chart
+  // send or recover initial chart
   try {
     const initResult = await fetchParkingData()
     if (!initResult.isOk()) throw initResult.error
@@ -64,8 +64,42 @@ client.once(Events.ClientReady, async (c) => {
     )
     const initTs = Math.floor(Date.now() / 1000)
     const initContent = `\`\`\`\n${initChart}\n\`\`\`\nBot last updated: <t:${initTs}:F>`
-    const sentMessage = await channel.send(initContent)
-    statusMessageId = sentMessage.id
+
+    // Try to find an existing parking status message to reuse
+    const headerMarker = 'SJSU Parking Garage Status'
+    const botId = client.user?.id
+    if (botId) {
+      try {
+        const recentMessages = await channel.messages.fetch({ limit: 100 })
+        const candidates = recentMessages.filter(
+          (m) => m.author.id === botId && m.content.includes(headerMarker)
+        )
+        const existing = candidates
+          .sort((a, b) => b.createdTimestamp - a.createdTimestamp)
+          .first()
+
+        if (existing) {
+          try {
+            await existing.edit(initContent)
+            statusMessageId = existing.id
+          } catch (err: any) {
+            if (err instanceof DiscordAPIError && err.code === 10008) {
+              // Message no longer exists, will send a new one below
+            } else {
+              console.error('Error editing existing parking chart', err)
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to search for existing parking chart message', e)
+      }
+    }
+
+    // If we couldn't reuse, send a new message
+    if (!statusMessageId) {
+      const sentMessage = await channel.send(initContent)
+      statusMessageId = sentMessage.id
+    }
 
     // schedule periodic edits
     setInterval(async () => {
