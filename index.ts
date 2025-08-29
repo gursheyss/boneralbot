@@ -173,9 +173,22 @@ client.on(Events.MessageCreate, async (message) => {
         }
 
         if (prompt) {
-          const imageUrls = referencedImageAttachments.map(
+          // Collect images from referenced message
+          const referencedImageUrls = referencedImageAttachments.map(
             (attachment) => attachment.url
           )
+
+          // Also collect any images from the current reply message
+          const replyImageAttachments = message.attachments.filter(
+            (attachment) => attachment.contentType?.startsWith('image/')
+          )
+          const replyImageUrls = replyImageAttachments.map(
+            (attachment) => attachment.url
+          )
+
+          // Combine all image URLs
+          const imageUrls = [...referencedImageUrls, ...replyImageUrls]
+
           const stopTyping = startTyping(message.channel)
           try {
             const result = await generateImage(prompt, imageUrls)
