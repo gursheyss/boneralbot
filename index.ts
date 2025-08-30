@@ -14,6 +14,7 @@ import {
 import { startTyping } from './lib/typing.ts'
 import { fetchParkingData, createTextChart } from './lib/parking.ts'
 import { generateImage } from './lib/image.ts'
+import { generateTLDR } from './lib/tldr.ts'
 
 const client = new Client({
   intents: [
@@ -174,6 +175,33 @@ client.on(Events.MessageCreate, async (message) => {
       await message.reply('failed to get parking stats')
     } finally {
       // Ensure typing always stops even if an error occurs above
+      stopTyping()
+    }
+    return
+  }
+
+  const lowerContent = message.content.toLowerCase().trim()
+  if (lowerContent === 'tldr' || lowerContent.startsWith('tldr ')) {
+    const stopTyping = startTyping(message.channel)
+    try {
+      let query: string | undefined
+      if (lowerContent.startsWith('tldr ')) {
+        query = message.content.trim().slice(5) // Remove 'tldr ' prefix
+      }
+
+      const result = await generateTLDR(message.channel as TextChannel, query)
+      stopTyping()
+
+      if (result.isOk()) {
+        await message.reply(result.value)
+      } else {
+        console.error('failed to generate tldr', result.error)
+        await message.reply('failed to generate tldr')
+      }
+    } catch (e) {
+      console.error('failed to generate tldr', e)
+      await message.reply('failed to generate tldr')
+    } finally {
       stopTyping()
     }
     return
