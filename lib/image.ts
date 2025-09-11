@@ -19,7 +19,7 @@ export function generateImage(
       })
 
       // @ts-expect-error - yes it does
-      const imageResponse = await fetch(output.url())
+      const imageResponse = await fetch(output[0].url())
       const buffer = Buffer.from(await imageResponse.arrayBuffer())
       return buffer
     })(),
