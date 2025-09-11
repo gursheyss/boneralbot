@@ -11,11 +11,10 @@ export function generateImage(
     (async () => {
       const input = {
         prompt: prompt,
-        image_input: imageUrls,
-        output_format: 'jpg'
+        image_input: imageUrls
       } as const
 
-      const output = await replicate.run('google/nano-banana', {
+      const output = await replicate.run('bytedance/seedream-4', {
         input
       })
 
