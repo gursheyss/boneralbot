@@ -230,11 +230,20 @@ client.on(Events.MessageCreate, async (message) => {
             stopTyping()
 
             if (result.isOk()) {
-              const attachment = new AttachmentBuilder(result.value, {
-                name: 'generated-image.jpg'
-              })
+              const seedreamAttachment = new AttachmentBuilder(
+                result.value.seedream,
+                {
+                  name: 'seedream-generated.jpg'
+                }
+              )
+              const nanoBananaAttachment = new AttachmentBuilder(
+                result.value.nanoBanana,
+                {
+                  name: 'nano-banana-generated.jpg'
+                }
+              )
               const sent = await message.reply({
-                files: [attachment],
+                files: [seedreamAttachment, nanoBananaAttachment],
                 components: [buildRetryRow()]
               })
               generationContext.set(sent.id, { prompt, imageUrls })
@@ -287,11 +296,20 @@ client.on(Events.MessageCreate, async (message) => {
       stopTyping()
 
       if (result.isOk()) {
-        const attachment = new AttachmentBuilder(result.value, {
-          name: 'generated-image.jpg'
-        })
+        const seedreamAttachment = new AttachmentBuilder(
+          result.value.seedream,
+          {
+            name: 'seedream-generated.jpg'
+          }
+        )
+        const nanoBananaAttachment = new AttachmentBuilder(
+          result.value.nanoBanana,
+          {
+            name: 'nano-banana-generated.jpg'
+          }
+        )
         const sent = await message.reply({
-          files: [attachment],
+          files: [seedreamAttachment, nanoBananaAttachment],
           components: [buildRetryRow()]
         })
         generationContext.set(sent.id, { prompt, imageUrls })
@@ -339,11 +357,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.deferReply({ ephemeral: true })
     const result = await generateImage(ctx.prompt, ctx.imageUrls)
     if (result.isOk()) {
-      const attachment = new AttachmentBuilder(result.value, {
-        name: 'generated-image.jpg'
+      const seedreamAttachment = new AttachmentBuilder(result.value.seedream, {
+        name: 'seedream-generated.jpg'
       })
+      const nanoBananaAttachment = new AttachmentBuilder(
+        result.value.nanoBanana,
+        {
+          name: 'nano-banana-generated.jpg'
+        }
+      )
       const sent = await channel.send({
-        files: [attachment],
+        files: [seedreamAttachment, nanoBananaAttachment],
         components: [buildRetryRow()]
       })
       generationContext.set(sent.id, ctx)
