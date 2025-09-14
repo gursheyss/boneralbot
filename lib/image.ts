@@ -1,12 +1,17 @@
 import Replicate from 'replicate'
-import { ResultAsync } from 'neverthrow'
+import { ResultAsync, Result, ok, err } from 'neverthrow'
 
 const replicate = new Replicate()
+
+export interface GenerationResult {
+  seedream: Result<Buffer, Error>
+  nanoBanana: Result<Buffer, Error>
+}
 
 export function generateImage(
   prompt: string,
   imageUrls: string[]
-): ResultAsync<{ seedream: Buffer; nanoBanana: Buffer }, Error> {
+): ResultAsync<GenerationResult, Error> {
   return ResultAsync.fromPromise(
     (async () => {
       const seedreamInput = {
@@ -20,31 +25,56 @@ export function generateImage(
         output_format: 'jpg'
       } as const
 
-      const [seedreamOutput, nanoBananaOutput] = await Promise.all([
-        replicate.run('bytedance/seedream-4', {
-          input: seedreamInput
-        }),
-        replicate.run('google/nano-banana', {
-          input: nanoBananaInput
-        })
-      ])
+      const seedreamResult = await ResultAsync.fromPromise(
+        replicate.run('bytedance/seedream-4', { input: seedreamInput }),
+        (e) =>
+          e instanceof Error ? e : new Error('Seedream generation failed')
+      )
+        .andThen((output) =>
+          ResultAsync.fromPromise(
+            // @ts-expect-error - yes it does
+            fetch(output[0].url()),
+            (e) => (e instanceof Error ? e : new Error('Seedream fetch failed'))
+          )
+        )
+        .andThen((response) =>
+          ResultAsync.fromPromise(
+            response.arrayBuffer().then((ab) => Buffer.from(ab)),
+            (e) =>
+              e instanceof Error ? e : new Error('Seedream buffer failed')
+          )
+        )
 
-      // Fetch both images in parallel
-      const [seedreamResponse, nanoBananaResponse] = await Promise.all([
-        // @ts-expect-error - yes it does
-        fetch(seedreamOutput[0].url()),
-        // @ts-expect-error - yes it does
-        fetch(nanoBananaOutput.url())
-      ])
-
-      const [seedreamBuffer, nanoBananaBuffer] = await Promise.all([
-        seedreamResponse.arrayBuffer().then((ab) => Buffer.from(ab)),
-        nanoBananaResponse.arrayBuffer().then((ab) => Buffer.from(ab))
-      ])
+      const nanoBananaResult = await ResultAsync.fromPromise(
+        replicate.run('google/nano-banana', { input: nanoBananaInput }),
+        (e) =>
+          e instanceof Error ? e : new Error('Nano-Banana generation failed')
+      )
+        .andThen((output) =>
+          ResultAsync.fromPromise(
+            // @ts-expect-error - yes it does
+            fetch(output.url()),
+            (e) =>
+              e instanceof Error ? e : new Error('Nano-Banana fetch failed')
+          )
+        )
+        .andThen((response) =>
+          ResultAsync.fromPromise(
+            response.arrayBuffer().then((ab) => Buffer.from(ab)),
+            (e) =>
+              e instanceof Error ? e : new Error('Nano-Banana buffer failed')
+          )
+        )
 
       return {
-        seedream: seedreamBuffer,
-        nanoBanana: nanoBananaBuffer
+        seedream: seedreamResult.match(
+          (buffer) => ok(buffer),
+          (error) => err(error)
+        ),
+        nanoBanana: nanoBananaResult.match(
+          (buffer) => ok(buffer),
+          (error) => err(error)
+        )
       }
     })(),
     (e) => (e instanceof Error ? e : new Error('Unknown error'))
