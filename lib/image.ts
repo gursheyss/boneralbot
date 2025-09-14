@@ -35,7 +35,7 @@ export function generateImage(
       const seedreamBuffer = Buffer.from(await seedreamResponse.arrayBuffer())
 
       // @ts-expect-error - yes it does
-      const nanoBananaResponse = await fetch(nanoBananaOutput[0].url())
+      const nanoBananaResponse = await fetch(nanoBananaOutput.url())
       const nanoBananaBuffer = Buffer.from(
         await nanoBananaResponse.arrayBuffer()
       )
