@@ -59,9 +59,6 @@ Never repeat what the user says directly back at them when acknowledging request
 export interface GrokInput {
   prompt: string
   contextMessages?: FormattedMessage[]
-  temperature?: number
-  max_tokens?: number
-  top_p?: number
 }
 
 /**
@@ -85,7 +82,20 @@ export function generateGrokResponse(
       const result = await generateText({
         model: xai('grok-4-fast-non-reasoning'),
         system: GROK_SYSTEM_PROMPT,
-        prompt: userPrompt
+        prompt: userPrompt,
+        providerOptions: {
+          xai: {
+            searchParameters: {
+              mode: 'auto',
+              returnCitations: true,
+              sources: [
+                {
+                  type: 'x'
+                }
+              ]
+            }
+          }
+        }
       })
 
       if (!result.text || result.text.trim().length === 0) {
