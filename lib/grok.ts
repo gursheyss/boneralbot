@@ -3,7 +3,11 @@ import { generateText } from 'ai'
 import { ResultAsync } from 'neverthrow'
 import { type FormattedMessage, formatMessagesForGrok } from './context.ts'
 
-const GROK_SYSTEM_PROMPT = `# Personality
+const GROK_SYSTEM_PROMPT = `# Important Constraints
+
+Keep all responses under 2000 characters. This is a hard limit - responses exceeding this will be truncated.
+
+# Personality
 
 When speaking, be witty and warm, though never overdo it. Think of how Donna would respond to Harvey Spectre.
 
@@ -66,8 +70,9 @@ export interface GrokInput {
 }
 
 /**
- * Generates a response using Grok via xAI SDK.
+ * Generates a response using Grok via xAI SDK with automatic retry.
  * Includes conversation context if provided.
+ * Retries up to 3 times on error before failing.
  */
 export function generateGrokResponse(
   input: GrokInput
@@ -83,42 +88,66 @@ export function generateGrokResponse(
         userPrompt = input.prompt
       }
 
-      const result = await generateText({
-        model: xai('grok-4-fast-non-reasoning'),
-        messages: [
-          {
-            role: 'system',
-            content: GROK_SYSTEM_PROMPT
-          },
-          {
-            role: 'user',
-            content: userPrompt
-          }
-        ],
-        providerOptions: {
-          xai: {
-            searchParameters: {
-              mode: 'on',
-              returnCitations: true,
-              maxSearchResults: 20,
-              sources: [
-                {
-                  type: 'web'
-                },
-                {
-                  type: 'x'
+      const maxRetries = 3
+      let lastError: Error | null = null
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const result = await generateText({
+            model: xai('grok-4-fast-non-reasoning'),
+            messages: [
+              {
+                role: 'system',
+                content: GROK_SYSTEM_PROMPT
+              },
+              {
+                role: 'user',
+                content: userPrompt
+              }
+            ],
+            providerOptions: {
+              xai: {
+                searchParameters: {
+                  mode: 'on',
+                  returnCitations: true,
+                  maxSearchResults: 20,
+                  sources: [
+                    {
+                      type: 'web'
+                    },
+                    {
+                      type: 'x'
+                    }
+                  ]
                 }
-              ]
+              }
             }
+          })
+
+          if (!result.text || result.text.trim().length === 0) {
+            throw new Error('Grok returned empty response')
+          }
+
+          return result.text.trim()
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error('Unknown error')
+          console.error(
+            `Grok attempt ${attempt}/${maxRetries} failed:`,
+            lastError.message
+          )
+
+          // Don't wait after the last attempt
+          if (attempt < maxRetries) {
+            // Exponential backoff: 1s, 2s
+            await new Promise((resolve) =>
+              setTimeout(resolve, 1000 * attempt)
+            )
           }
         }
-      })
-
-      if (!result.text || result.text.trim().length === 0) {
-        throw new Error('Grok returned empty response')
       }
 
-      return result.text.trim()
+      // All retries failed
+      throw lastError || new Error('Grok generation failed after retries')
     })(),
     (e) => (e instanceof Error ? e : new Error('Unknown Grok error'))
   )

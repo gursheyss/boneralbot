@@ -466,7 +466,12 @@ client.on(Events.MessageCreate, async (message) => {
         stopTyping()
 
         if (result.isOk()) {
-          const response = result.value
+          let response = result.value
+
+          // Discord message limit is 2000 characters
+          if (response.length > 2000) {
+            response = response.substring(0, 1997) + '...'
+          }
 
           const sent = await message.reply({
             content: response,
@@ -640,7 +645,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       })
 
       if (result.isOk()) {
-        const response = result.value
+        let response = result.value
+
+        // Discord message limit is 2000 characters
+        if (response.length > 2000) {
+          response = response.substring(0, 1997) + '...'
+        }
 
         const sent = await channel.send({
           content: response,
