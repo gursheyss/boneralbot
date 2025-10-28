@@ -447,14 +447,10 @@ client.on(Events.MessageCreate, async (message) => {
         let contextMessages: FormattedMessage[] = []
         let isThread = false
 
-        // Determine if this is a thread (reply) or conversation mode
+        // Only fetch context if this is a reply/thread
         if (message.reference) {
-          // Thread mode: fetch full thread chain
           isThread = true
           contextMessages = await fetchThreadChain(message)
-        } else {
-          // Conversation mode: fetch last 10 messages
-          contextMessages = await fetchConversationContext(message, 10)
         }
 
         const result = await generateGrokResponse({
