@@ -94,8 +94,7 @@ export function generateGrokResponse(
         providerOptions: {
           xai: {
             searchParameters: {
-              mode: 'auto',
-              returnCitations: true,
+              mode: 'on',
               sources: [
                 {
                   type: 'x'
