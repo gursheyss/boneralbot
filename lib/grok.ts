@@ -85,8 +85,7 @@ export function generateGrokResponse(
       const result = await generateText({
         model: xai('grok-4-fast-non-reasoning'),
         system: GROK_SYSTEM_PROMPT,
-        prompt: userPrompt,
-        topP: input.top_p ?? 1
+        prompt: userPrompt
       })
 
       if (!result.text || result.text.trim().length === 0) {
