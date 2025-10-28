@@ -81,8 +81,16 @@ export function generateGrokResponse(
 
       const result = await generateText({
         model: xai('grok-4-fast-non-reasoning'),
-        system: GROK_SYSTEM_PROMPT,
-        prompt: userPrompt,
+        messages: [
+          {
+            role: 'system',
+            content: GROK_SYSTEM_PROMPT
+          },
+          {
+            role: 'user',
+            content: userPrompt
+          }
+        ],
         providerOptions: {
           xai: {
             searchParameters: {
