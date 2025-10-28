@@ -16,7 +16,9 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@ai-sdk/xai": "^2.0.28",
     "@types/cheerio": "^1.0.0",
+    "ai": "^5.0.81",
     "cheerio": "^1.1.2",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",

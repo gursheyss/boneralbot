@@ -14,6 +14,12 @@ import {
 import { startTyping } from './lib/typing.ts'
 import { fetchParkingData, createTextChart } from './lib/parking.ts'
 import { generateImage } from './lib/image.ts'
+import { generateGrokResponse } from './lib/grok.ts'
+import {
+  fetchConversationContext,
+  fetchThreadChain,
+  type FormattedMessage
+} from './lib/context.ts'
 
 const client = new Client({
   intents: [
@@ -31,9 +37,28 @@ const generationContext = new Map<
   { prompt: string; imageUrls: string[] }
 >()
 
+const grokGenerationContext = new Map<
+  string,
+  {
+    prompt: string
+    contextMessages: FormattedMessage[]
+    isThread: boolean
+  }
+>()
+
 function buildRetryRow() {
   const retry = new ButtonBuilder()
     .setCustomId('retry_gen')
+    .setLabel('Retry')
+    .setStyle(ButtonStyle.Primary)
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(retry)
+  return row
+}
+
+function buildGrokRetryRow() {
+  const retry = new ButtonBuilder()
+    .setCustomId('retry_grok')
     .setLabel('Retry')
     .setStyle(ButtonStyle.Primary)
 
@@ -392,115 +417,262 @@ client.on(Events.MessageCreate, async (message) => {
       // Ensure typing always stops even if an error occurs above
       stopTyping()
     }
+    return
+  }
+
+  // Handle @mentions without images - use Grok
+  // biome-ignore lint/style/noNonNullAssertion: lameeee
+  if (message.mentions.has(client.user!)) {
+    const imageAttachments = message.attachments.filter((attachment) =>
+      attachment.contentType?.startsWith('image/')
+    )
+
+    // Only proceed if there are NO images (image generation is handled above)
+    if (imageAttachments.size === 0) {
+      const botId = client.user!.id
+      const prompt = message.content
+        .replace(new RegExp(`^<@!?${botId}>\\s*`), '')
+        .replace(new RegExp(`\\s*<@!?${botId}>$`), '')
+        .trim()
+
+      if (!prompt) {
+        await message.reply(
+          'Please include a message or question when you mention me!'
+        )
+        return
+      }
+
+      const stopTyping = startTyping(message.channel)
+      try {
+        let contextMessages: FormattedMessage[] = []
+        let isThread = false
+
+        // Determine if this is a thread (reply) or conversation mode
+        if (message.reference) {
+          // Thread mode: fetch full thread chain
+          isThread = true
+          contextMessages = await fetchThreadChain(message)
+        } else {
+          // Conversation mode: fetch last 10 messages
+          contextMessages = await fetchConversationContext(message, 10)
+        }
+
+        const result = await generateGrokResponse({
+          prompt,
+          contextMessages
+        })
+
+        // Stop typing before sending the reply
+        stopTyping()
+
+        if (result.isOk()) {
+          const response = result.value
+
+          const sent = await message.reply({
+            content: response,
+            components: [buildGrokRetryRow()]
+          })
+
+          // Store context for retry
+          grokGenerationContext.set(sent.id, {
+            prompt,
+            contextMessages,
+            isThread
+          })
+        } else {
+          console.error('Grok generation failed:', result.error)
+          await message.reply(
+            `Failed to generate response: ${result.error.message}`
+          )
+        }
+      } catch (e) {
+        console.error('Grok generation error:', e)
+        await message.reply('An error occurred while generating a response')
+      } finally {
+        // Ensure typing always stops even if an error occurs above
+        stopTyping()
+      }
+      return
+    }
   }
 })
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isButton()) return
-  if (interaction.customId !== 'retry_gen') return
 
-  const ctx = generationContext.get(interaction.message.id)
-  if (!ctx) {
-    await interaction.reply({
-      content:
-        'context expired. reply to the original image with your prompt to regenerate.',
-      ephemeral: true
-    })
-    return
-  }
+  // Handle image generation retry
+  if (interaction.customId === 'retry_gen') {
+    const ctx = generationContext.get(interaction.message.id)
+    if (!ctx) {
+      await interaction.reply({
+        content:
+          'context expired. reply to the original image with your prompt to regenerate.',
+        ephemeral: true
+      })
+      return
+    }
 
-  if (!interaction.channel) {
-    await interaction.reply({ content: 'cannot retry here', ephemeral: true })
-    return
-  }
+    if (!interaction.channel) {
+      await interaction.reply({ content: 'cannot retry here', ephemeral: true })
+      return
+    }
 
-  const channel = interaction.channel
-  if (!('sendTyping' in channel) || !('send' in channel)) {
-    await interaction.reply({ content: 'cannot retry here', ephemeral: true })
-    return
-  }
+    const channel = interaction.channel
+    if (!('sendTyping' in channel) || !('send' in channel)) {
+      await interaction.reply({ content: 'cannot retry here', ephemeral: true })
+      return
+    }
 
-  const stopTyping = startTyping(channel)
-  try {
-    await interaction.deferReply({ ephemeral: true })
-    const result = await generateImage(ctx.prompt, ctx.imageUrls)
-    if (result.isOk()) {
-      const files: AttachmentBuilder[] = []
-      const errors: string[] = []
+    const stopTyping = startTyping(channel)
+    try {
+      await interaction.deferReply({ ephemeral: true })
+      const result = await generateImage(ctx.prompt, ctx.imageUrls)
+      if (result.isOk()) {
+        const files: AttachmentBuilder[] = []
+        const errors: string[] = []
 
-      if (result.value.seedream.isOk()) {
-        files.push(
-          new AttachmentBuilder(result.value.seedream.value, {
-            name: 'seedream-generated.jpg'
-          })
-        )
-      } else {
-        console.error(
-          'Seedream generation failed:',
-          result.value.seedream.error
-        )
-        errors.push(`Seedream: ${result.value.seedream.error.message}`)
-      }
-
-      if (result.value.nanoBanana.isOk()) {
-        files.push(
-          new AttachmentBuilder(result.value.nanoBanana.value, {
-            name: 'nano-banana-generated.jpg'
-          })
-        )
-      } else {
-        console.error(
-          'Nano-Banana generation failed:',
-          result.value.nanoBanana.error
-        )
-        errors.push(`Nano-Banana: ${result.value.nanoBanana.error.message}`)
-      }
-
-      if (files.length > 0) {
-        // Send successful generations
-        let content = ''
-        if (errors.length > 0) {
-          content = `⚠️ Some generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
-        }
-
-        const sent = await channel.send({
-          content: content || undefined,
-          files,
-          components: [buildRetryRow()]
-        })
-        generationContext.set(sent.id, ctx)
-
-        if (errors.length > 0) {
-          await interaction.editReply(
-            'Retry complete with some errors - check the message above'
+        if (result.value.seedream.isOk()) {
+          files.push(
+            new AttachmentBuilder(result.value.seedream.value, {
+              name: 'seedream-generated.jpg'
+            })
           )
         } else {
-          await interaction.editReply('Retry complete')
+          console.error(
+            'Seedream generation failed:',
+            result.value.seedream.error
+          )
+          errors.push(`Seedream: ${result.value.seedream.error.message}`)
+        }
+
+        if (result.value.nanoBanana.isOk()) {
+          files.push(
+            new AttachmentBuilder(result.value.nanoBanana.value, {
+              name: 'nano-banana-generated.jpg'
+            })
+          )
+        } else {
+          console.error(
+            'Nano-Banana generation failed:',
+            result.value.nanoBanana.error
+          )
+          errors.push(`Nano-Banana: ${result.value.nanoBanana.error.message}`)
+        }
+
+        if (files.length > 0) {
+          // Send successful generations
+          let content = ''
+          if (errors.length > 0) {
+            content = `⚠️ Some generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+          }
+
+          const sent = await channel.send({
+            content: content || undefined,
+            files,
+            components: [buildRetryRow()]
+          })
+          generationContext.set(sent.id, ctx)
+
+          if (errors.length > 0) {
+            await interaction.editReply(
+              'Retry complete with some errors - check the message above'
+            )
+          } else {
+            await interaction.editReply('Retry complete')
+          }
+        } else {
+          // All generations failed
+          await interaction.editReply(
+            `❌ Retry failed - all generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+          )
         }
       } else {
-        // All generations failed
+        console.error('failed to generate image', result.error)
+        await interaction.editReply(`failed to generate: ${result.error}`)
+      }
+    } catch (e) {
+      console.error('failed to generate image', e)
+      try {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply('failed to generate image')
+        } else {
+          await interaction.reply({
+            content: 'failed to generate image',
+            ephemeral: true
+          })
+        }
+      } catch {}
+    } finally {
+      stopTyping()
+    }
+    return
+  }
+
+  // Handle Grok retry
+  if (interaction.customId === 'retry_grok') {
+    const ctx = grokGenerationContext.get(interaction.message.id)
+    if (!ctx) {
+      await interaction.reply({
+        content: 'Context expired. Please mention me again with your question.',
+        ephemeral: true
+      })
+      return
+    }
+
+    if (!interaction.channel) {
+      await interaction.reply({ content: 'cannot retry here', ephemeral: true })
+      return
+    }
+
+    const channel = interaction.channel
+    if (!('sendTyping' in channel) || !('send' in channel)) {
+      await interaction.reply({ content: 'cannot retry here', ephemeral: true })
+      return
+    }
+
+    const stopTyping = startTyping(channel)
+    try {
+      await interaction.deferReply({ ephemeral: true })
+
+      const result = await generateGrokResponse({
+        prompt: ctx.prompt,
+        contextMessages: ctx.contextMessages
+      })
+
+      if (result.isOk()) {
+        const response = result.value
+
+        const sent = await channel.send({
+          content: response,
+          components: [buildGrokRetryRow()]
+        })
+
+        // Store context for future retries
+        grokGenerationContext.set(sent.id, ctx)
+
+        await interaction.editReply('Retry complete')
+      } else {
+        console.error('Grok retry failed:', result.error)
         await interaction.editReply(
-          `❌ Retry failed - all generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+          `Failed to generate response: ${result.error.message}`
         )
       }
-    } else {
-      console.error('failed to generate image', result.error)
-      await interaction.editReply(`failed to generate: ${result.error}`)
+    } catch (e) {
+      console.error('Grok retry error:', e)
+      try {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply('Failed to generate response')
+        } else {
+          await interaction.reply({
+            content: 'Failed to generate response',
+            ephemeral: true
+          })
+        }
+      } catch {}
+    } finally {
+      stopTyping()
     }
-  } catch (e) {
-    console.error('failed to generate image', e)
-    try {
-      if (interaction.deferred || interaction.replied) {
-        await interaction.editReply('failed to generate image')
-      } else {
-        await interaction.reply({
-          content: 'failed to generate image',
-          ephemeral: true
-        })
-      }
-    } catch {}
-  } finally {
-    stopTyping()
+    return
   }
 })
 
