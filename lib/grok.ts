@@ -1,8 +1,7 @@
-import Replicate from 'replicate'
-import { ResultAsync, ok, err } from 'neverthrow'
+import { xai } from '@ai-sdk/xai'
+import { generateText } from 'ai'
+import { ResultAsync } from 'neverthrow'
 import { type FormattedMessage, formatMessagesForGrok } from './context.ts'
-
-const replicate = new Replicate()
 
 const GROK_SYSTEM_PROMPT = `# Personality
 
@@ -66,7 +65,7 @@ export interface GrokInput {
 }
 
 /**
- * Generates a response using Grok-4 via Replicate.
+ * Generates a response using Grok via xAI SDK.
  * Includes conversation context if provided.
  */
 export function generateGrokResponse(
@@ -74,41 +73,27 @@ export function generateGrokResponse(
 ): ResultAsync<string, Error> {
   return ResultAsync.fromPromise(
     (async () => {
-      // Build the full prompt with context
-      let fullPrompt = GROK_SYSTEM_PROMPT + '\n\n---\n\n'
+      let userPrompt = ''
 
       if (input.contextMessages && input.contextMessages.length > 0) {
         const contextString = formatMessagesForGrok(input.contextMessages)
-        fullPrompt += `Here is the conversation context:\n\n${contextString}\n\n---\n\nUser: ${input.prompt}`
+        userPrompt = `Here is the conversation context:\n\n${contextString}\n\n---\n\n${input.prompt}`
       } else {
-        fullPrompt += `User: ${input.prompt}`
+        userPrompt = input.prompt
       }
 
-      // Prepare Grok API input
-      const grokInput = {
-        prompt: fullPrompt
-      }
+      const result = await generateText({
+        model: xai('grok-4-fast-non-reasoning'),
+        system: GROK_SYSTEM_PROMPT,
+        prompt: userPrompt,
+        topP: input.top_p ?? 1
+      })
 
-      // Stream the response and aggregate
-      let response = ''
-
-      try {
-        for await (const event of replicate.stream('xai/grok-4', {
-          input: grokInput
-        })) {
-          response += event
-        }
-      } catch (error) {
-        throw error instanceof Error
-          ? error
-          : new Error('Grok streaming failed')
-      }
-
-      if (!response || response.trim().length === 0) {
+      if (!result.text || result.text.trim().length === 0) {
         throw new Error('Grok returned empty response')
       }
 
-      return response.trim()
+      return result.text.trim()
     })(),
     (e) => (e instanceof Error ? e : new Error('Unknown Grok error'))
   )
