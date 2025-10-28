@@ -95,11 +95,8 @@ export function generateGrokResponse(
         try {
           const result = await generateText({
             model: xai('grok-4-fast-non-reasoning'),
+            system: GROK_SYSTEM_PROMPT,
             messages: [
-              {
-                role: 'system',
-                content: GROK_SYSTEM_PROMPT
-              },
               {
                 role: 'user',
                 content: userPrompt
@@ -112,9 +109,6 @@ export function generateGrokResponse(
                   returnCitations: true,
                   maxSearchResults: 20,
                   sources: [
-                    {
-                      type: 'web'
-                    },
                     {
                       type: 'x'
                     }
@@ -130,7 +124,8 @@ export function generateGrokResponse(
 
           return result.text.trim()
         } catch (error) {
-          lastError = error instanceof Error ? error : new Error('Unknown error')
+          lastError =
+            error instanceof Error ? error : new Error('Unknown error')
           console.error(
             `Grok attempt ${attempt}/${maxRetries} failed:`,
             lastError.message
@@ -139,9 +134,7 @@ export function generateGrokResponse(
           // Don't wait after the last attempt
           if (attempt < maxRetries) {
             // Exponential backoff: 1s, 2s
-            await new Promise((resolve) =>
-              setTimeout(resolve, 1000 * attempt)
-            )
+            await new Promise((resolve) => setTimeout(resolve, 1000 * attempt))
           }
         }
       }
