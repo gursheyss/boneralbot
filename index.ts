@@ -14,6 +14,7 @@ import {
 import { startTyping } from './lib/typing.ts'
 import { fetchParkingData, createTextChart } from './lib/parking.ts'
 import { generateImage } from './lib/image.ts'
+import { swapFacesBothWays } from './lib/faceswap.ts'
 import { generateGrokResponse } from './lib/grok.ts'
 import {
   fetchConversationContext,
@@ -197,6 +198,53 @@ client.on(Events.MessageCreate, async (message) => {
     } catch (e) {
       console.error('failed to get parking stats', e)
       await message.reply('failed to get parking stats')
+    } finally {
+      // Ensure typing always stops even if an error occurs above
+      stopTyping()
+    }
+    return
+  }
+
+  if (message.content.toLowerCase().includes('faceswap')) {
+    const imageAttachments = message.attachments.filter((attachment) =>
+      attachment.contentType?.startsWith('image/')
+    )
+
+    if (imageAttachments.size < 2) {
+      await message.reply('please attach two images to use faceswap.')
+      return
+    }
+
+    const [firstImage, secondImage] = Array.from(imageAttachments.values())
+    if (!firstImage || !secondImage) {
+      await message.reply('could not read both images, please try again.')
+      return
+    }
+
+    const stopTyping = startTyping(message.channel)
+    try {
+      const result = await swapFacesBothWays(firstImage.url, secondImage.url)
+      // Stop typing before sending the reply
+      stopTyping()
+
+      if (result.isOk()) {
+        const files: AttachmentBuilder[] = [
+          new AttachmentBuilder(result.value.firstToSecond, {
+            name: 'faceswap-a-with-b.jpg'
+          }),
+          new AttachmentBuilder(result.value.secondToFirst, {
+            name: 'faceswap-b-with-a.jpg'
+          })
+        ]
+
+        await message.reply({ files })
+      } else {
+        console.error('face swap failed:', result.error)
+        await message.reply(`failed to swap faces: ${result.error.message}`)
+      }
+    } catch (e) {
+      console.error('faceswap error:', e)
+      await message.reply('an error occurred while swapping faces.')
     } finally {
       // Ensure typing always stops even if an error occurs above
       stopTyping()
