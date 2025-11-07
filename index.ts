@@ -14,7 +14,7 @@ import {
 import { startTyping } from './lib/typing.ts'
 import { fetchParkingData, createTextChart } from './lib/parking.ts'
 import { generateImage } from './lib/image.ts'
-import { swapFacesBothWays } from './lib/faceswap.ts'
+import { swapFaceOntoTarget, swapFaceInVideo } from './lib/faceswap.ts'
 import { generateGrokResponse } from './lib/grok.ts'
 import {
   fetchConversationContext,
@@ -223,21 +223,18 @@ client.on(Events.MessageCreate, async (message) => {
 
     const stopTyping = startTyping(message.channel)
     try {
-      const result = await swapFacesBothWays(firstImage.url, secondImage.url)
+      const result = await swapFaceOntoTarget(firstImage.url, secondImage.url)
       // Stop typing before sending the reply
       stopTyping()
 
       if (result.isOk()) {
-        const files: AttachmentBuilder[] = [
-          new AttachmentBuilder(result.value.firstToSecond, {
-            name: 'faceswap-a-with-b.jpg'
-          }),
-          new AttachmentBuilder(result.value.secondToFirst, {
-            name: 'faceswap-b-with-a.jpg'
-          })
-        ]
-
-        await message.reply({ files })
+        await message.reply({
+          files: [
+            new AttachmentBuilder(result.value, {
+              name: 'swap.jpg'
+            })
+          ]
+        })
       } else {
         console.error('face swap failed:', result.error)
         await message.reply(`failed to swap faces: ${result.error.message}`)
@@ -250,6 +247,50 @@ client.on(Events.MessageCreate, async (message) => {
       stopTyping()
     }
     return
+  }
+
+  if (client.user && message.mentions.has(client.user) && message.attachments.size > 0) {
+    const imageAttachments = message.attachments.filter((attachment) =>
+      attachment.contentType?.startsWith('image/')
+    )
+    const videoAttachments = message.attachments.filter((attachment) =>
+      attachment.contentType?.startsWith('video/')
+    )
+
+    if (imageAttachments.size > 0 && videoAttachments.size > 0) {
+      const swapImage = imageAttachments.first()
+      const targetVideo = videoAttachments.first()
+
+      if (!swapImage || !targetVideo) {
+        await message.reply('could not read the provided media, please try again.')
+        return
+      }
+
+      const stopTyping = startTyping(message.channel)
+      try {
+        const result = await swapFaceInVideo(swapImage.url, targetVideo.url)
+        stopTyping()
+
+        if (result.isOk()) {
+          await message.reply({
+            files: [
+              new AttachmentBuilder(result.value, {
+                name: 'faceswap-video.mp4'
+              })
+            ]
+          })
+        } else {
+          console.error('video face swap failed:', result.error)
+          await message.reply(`failed to swap video faces: ${result.error.message}`)
+        }
+      } catch (e) {
+        console.error('video faceswap error:', e)
+        await message.reply('an error occurred while swapping faces in the video.')
+      } finally {
+        stopTyping()
+      }
+      return
+    }
   }
 
   if (message.reference) {
