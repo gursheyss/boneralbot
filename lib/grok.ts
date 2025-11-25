@@ -92,19 +92,26 @@ export function generateGrokResponse(
 ): ResultAsync<GrokResponse, Error> {
   return ResultAsync.fromPromise(
     (async () => {
+      console.log('[grok] starting generation')
+      console.log('[grok] prompt:', input.prompt)
+      console.log('[grok] context messages:', input.contextMessages?.length ?? 0)
+
       let userPrompt = ''
 
       if (input.contextMessages && input.contextMessages.length > 0) {
         const contextString = formatMessagesForGrok(input.contextMessages)
         userPrompt = `Here is the conversation context:\n\n${contextString}\n\n---\n\n${input.prompt}`
+        console.log('[grok] built prompt with context')
       } else {
         userPrompt = input.prompt
+        console.log('[grok] using prompt without context')
       }
 
       const maxRetries = 3
       let lastError: Error | null = null
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        console.log(`[grok] attempt ${attempt}/${maxRetries}`)
         try {
           const result = await generateText({
             model: xai('grok-4-1-fast-reasoning'),
@@ -127,24 +134,34 @@ export function generateGrokResponse(
             }
           })
 
+          console.log('[grok] got response')
+          console.log('[grok] text length:', result.text?.length ?? 0)
+          console.log('[grok] reasoning:', result.reasoningText ? 'yes' : 'no')
+          console.log('[grok] reasoning length:', result.reasoningText?.length ?? 0)
+          console.log('[grok] full result keys:', Object.keys(result))
+
           if (!result.text || result.text.trim().length === 0) {
+            console.log('[grok] empty response, throwing error')
             throw new Error('Grok returned empty response')
           }
 
-          return {
+          const response = {
             text: result.text.trim(),
             reasoning: result.reasoningText?.trim()
           }
+          console.log('[grok] returning response with reasoning:', !!response.reasoning)
+          return response
         } catch (error) {
           lastError =
             error instanceof Error ? error : new Error('Unknown error')
           console.error(
-            `Grok attempt ${attempt}/${maxRetries} failed:`,
+            `[grok] attempt ${attempt}/${maxRetries} failed:`,
             lastError.message
           )
 
           // Don't wait after the last attempt
           if (attempt < maxRetries) {
+            console.log(`[grok] waiting ${attempt}s before retry`)
             // Exponential backoff: 1s, 2s
             await new Promise((resolve) => setTimeout(resolve, 1000 * attempt))
           }
@@ -152,6 +169,7 @@ export function generateGrokResponse(
       }
 
       // All retries failed
+      console.error('[grok] all retries failed')
       throw lastError || new Error('Grok generation failed after retries')
     })(),
     (e) => (e instanceof Error ? e : new Error('Unknown Grok error'))

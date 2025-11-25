@@ -20,6 +20,7 @@ async function canUseNanoBanana(): Promise<boolean> {
   await redis.send('ZREMRANGEBYSCORE', [RATE_LIMIT_KEY, '-inf', String(windowStart)])
   const count = await redis.send('ZCARD', [RATE_LIMIT_KEY])
 
+  console.log('[image] nano-banana rate limit check:', count, '/', NANO_BANANA_RATE_LIMIT)
   return (count as number) < NANO_BANANA_RATE_LIMIT
 }
 
@@ -33,6 +34,7 @@ async function recordNanoBananaRequest(userId: string): Promise<void> {
 
   // Increment user's count in leaderboard
   await redis.send('ZINCRBY', [LEADERBOARD_KEY, '1', userId])
+  console.log('[image] recorded nano-banana request for user:', userId)
 }
 
 async function getLeaderboard(): Promise<{ userId: string; count: number }[]> {
@@ -50,6 +52,7 @@ async function getLeaderboard(): Promise<{ userId: string; count: number }[]> {
       })
     }
   }
+  console.log('[image] leaderboard entries:', leaderboard.length)
   return leaderboard
 }
 
@@ -89,6 +92,13 @@ export function generateImage(
 ): ResultAsync<GenerationResult, Error> {
   return ResultAsync.fromPromise(
     (async () => {
+      console.log('[image] starting generation')
+      console.log('[image] prompt:', prompt)
+      console.log('[image] image urls:', imageUrls.length)
+      console.log('[image] user id:', userId ?? 'none')
+
+      // Start both generations
+      console.log('[image] starting seedream generation')
       const seedreamInput = {
         prompt: prompt,
         image_input: imageUrls
@@ -99,26 +109,35 @@ export function generateImage(
         (e) =>
           e instanceof Error ? e : new Error('Seedream generation failed')
       )
-        .andThen((output) =>
-          ResultAsync.fromPromise(
+        .andThen((output) => {
+          console.log('[image] seedream replicate response received')
+          return ResultAsync.fromPromise(
             // @ts-expect-error - yes it does
             fetch(output[0].url()),
             (e) => (e instanceof Error ? e : new Error('Seedream fetch failed'))
           )
-        )
-        .andThen((response) =>
-          ResultAsync.fromPromise(
+        })
+        .andThen((response) => {
+          console.log('[image] seedream fetch complete, status:', response.status)
+          return ResultAsync.fromPromise(
             response.arrayBuffer().then((ab) => Buffer.from(ab)),
             (e) =>
               e instanceof Error ? e : new Error('Seedream buffer failed')
           )
-        )
+        })
+
+      if (seedreamResult.isOk()) {
+        console.log('[image] seedream success, buffer size:', seedreamResult.value.length)
+      } else {
+        console.error('[image] seedream failed:', seedreamResult.error.message)
+      }
 
       // Check rate limit before making nano-banana-pro request
       let nanoBananaResult: Result<Buffer, Error>
 
       const canUse = await canUseNanoBanana()
       if (!canUse) {
+        console.log('[image] nano-banana rate limited')
         const leaderboard = await getLeaderboard()
         const leaderboardText = formatLeaderboard(leaderboard)
         nanoBananaResult = err(
@@ -127,6 +146,7 @@ export function generateImage(
           )
         )
       } else {
+        console.log('[image] starting nano-banana-pro generation')
         const nanoBananaInput = {
           prompt: prompt,
           image_input: imageUrls,
@@ -135,6 +155,7 @@ export function generateImage(
           output_format: 'jpg',
           safety_filter_level: 'block_only_high'
         } as const
+        console.log('[image] nano-banana input:', JSON.stringify(nanoBananaInput))
 
         nanoBananaResult = await ResultAsync.fromPromise(
           replicate.run('google/nano-banana-pro', { input: nanoBananaInput }),
@@ -144,6 +165,7 @@ export function generateImage(
               : new Error('Nano-Banana Pro generation failed')
         )
           .andThen((output) => {
+            console.log('[image] nano-banana replicate response received')
             if (userId) {
               recordNanoBananaRequest(userId)
             }
@@ -156,20 +178,31 @@ export function generateImage(
                   : new Error('Nano-Banana Pro fetch failed')
             )
           })
-          .andThen((response) =>
-            ResultAsync.fromPromise(
+          .andThen((response) => {
+            console.log('[image] nano-banana fetch complete, status:', response.status)
+            return ResultAsync.fromPromise(
               response.arrayBuffer().then((ab) => Buffer.from(ab)),
               (e) =>
                 e instanceof Error
                   ? e
                   : new Error('Nano-Banana Pro buffer failed')
             )
-          )
+          })
           .match(
-            (buffer) => ok(buffer),
-            (error) => err(error)
+            (buffer) => {
+              console.log('[image] nano-banana success, buffer size:', buffer.length)
+              return ok(buffer)
+            },
+            (error) => {
+              console.error('[image] nano-banana failed:', error.message)
+              return err(error)
+            }
           )
       }
+
+      console.log('[image] generation complete')
+      console.log('[image] seedream:', seedreamResult.isOk() ? 'success' : 'failed')
+      console.log('[image] nano-banana:', nanoBananaResult.isOk() ? 'success' : 'failed')
 
       return {
         seedream: seedreamResult.match(
