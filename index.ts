@@ -68,84 +68,91 @@ client.once(Events.ClientReady, (c) => {
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return
 
-  // Handle "image <prompt>" command - generate image from text prompt only
-  if (message.content.toLowerCase().startsWith('image ')) {
-    const prompt = message.content.slice(6).trim() // Remove "image " prefix
+  // Handle "@bot image <prompt>" command - generate image from text prompt only
+  if (client.user && message.mentions.has(client.user)) {
+    const botId = client.user.id
+    const cleaned = message.content
+      .replace(new RegExp(`<@!?${botId}>`, 'g'), '')
+      .trim()
 
-    if (!prompt) {
-      await message.reply('please include a prompt after "image"')
-      return
-    }
+    if (cleaned.toLowerCase().startsWith('image ')) {
+      const prompt = cleaned.slice(6).trim()
 
-    const stopTyping = startTyping(message.channel)
-    try {
-      const result = await generateImage(prompt, [], message.author.id)
-      stopTyping()
+      if (!prompt) {
+        await message.reply('please include a prompt after "image"')
+        return
+      }
 
-      if (result.isOk()) {
-        const files: AttachmentBuilder[] = []
-        const errors: string[] = []
+      const stopTyping = startTyping(message.channel)
+      try {
+        const result = await generateImage(prompt, [], message.author.id)
+        stopTyping()
 
-        if (result.value.seedream.isOk()) {
-          files.push(
-            new AttachmentBuilder(result.value.seedream.value, {
-              name: 'seedream-generated.jpg'
-            })
-          )
-        } else {
-          console.error(
-            'Seedream generation failed:',
-            result.value.seedream.error
-          )
-          errors.push(`Seedream: ${result.value.seedream.error.message}`)
-        }
+        if (result.isOk()) {
+          const files: AttachmentBuilder[] = []
+          const errors: string[] = []
 
-        if (result.value.nanoBanana.isOk()) {
-          files.push(
-            new AttachmentBuilder(result.value.nanoBanana.value, {
-              name: 'nano-banana-generated.jpg'
-            })
-          )
-        } else {
-          console.error(
-            'Nano-Banana generation failed:',
-            result.value.nanoBanana.error
-          )
-          errors.push(`Nano-Banana: ${result.value.nanoBanana.error.message}`)
-        }
-
-        if (files.length > 0) {
-          let content = ''
-          if (errors.length > 0) {
-            content = `⚠️ Some generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+          if (result.value.seedream.isOk()) {
+            files.push(
+              new AttachmentBuilder(result.value.seedream.value, {
+                name: 'seedream-generated.jpg'
+              })
+            )
+          } else {
+            console.error(
+              'Seedream generation failed:',
+              result.value.seedream.error
+            )
+            errors.push(`Seedream: ${result.value.seedream.error.message}`)
           }
 
-          const sent = await message.reply({
-            content: content || undefined,
-            files,
-            components: [buildRetryRow()]
-          })
-          generationContext.set(sent.id, {
-            prompt,
-            imageUrls: [],
-            userId: message.author.id
-          })
+          if (result.value.nanoBanana.isOk()) {
+            files.push(
+              new AttachmentBuilder(result.value.nanoBanana.value, {
+                name: 'nano-banana-generated.jpg'
+              })
+            )
+          } else {
+            console.error(
+              'Nano-Banana generation failed:',
+              result.value.nanoBanana.error
+            )
+            errors.push(`Nano-Banana: ${result.value.nanoBanana.error.message}`)
+          }
+
+          if (files.length > 0) {
+            let content = ''
+            if (errors.length > 0) {
+              content = `some generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
+            }
+
+            const sent = await message.reply({
+              content: content || undefined,
+              files,
+              components: [buildRetryRow()]
+            })
+            generationContext.set(sent.id, {
+              prompt,
+              imageUrls: [],
+              userId: message.author.id
+            })
+          } else {
+            await message.reply(
+              `all generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
+            )
+          }
         } else {
-          await message.reply(
-            `❌ All generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
-          )
+          console.error('failed to generate image', result.error)
+          await message.reply(`failed to generate: ${result.error}`)
         }
-      } else {
-        console.error('failed to generate image', result.error)
-        await message.reply(`failed to generate: ${result.error}`)
+      } catch (e) {
+        console.error('failed to generate image', e)
+        await message.reply('failed to generate image')
+      } finally {
+        stopTyping()
       }
-    } catch (e) {
-      console.error('failed to generate image', e)
-      await message.reply('failed to generate image')
-    } finally {
-      stopTyping()
+      return
     }
-    return
   }
 
   if (message.content.toLowerCase().includes('faceswap')) {
@@ -338,7 +345,7 @@ client.on(Events.MessageCreate, async (message) => {
                 // Send successful generations
                 let content = ''
                 if (errors.length > 0) {
-                  content = `⚠️ Some generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+                  content = `some generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
                 }
 
                 const sent = await message.reply({
@@ -354,7 +361,7 @@ client.on(Events.MessageCreate, async (message) => {
               } else {
                 // All generations failed
                 await message.reply(
-                  `❌ All generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+                  `all generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
                 )
               }
             } else {
@@ -441,7 +448,7 @@ client.on(Events.MessageCreate, async (message) => {
           // Send successful generations
           let content = ''
           if (errors.length > 0) {
-            content = `⚠️ Some generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+            content = `some generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
           }
 
           const sent = await message.reply({
@@ -457,7 +464,7 @@ client.on(Events.MessageCreate, async (message) => {
         } else {
           // All generations failed
           await message.reply(
-            `❌ All generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+            `all generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
           )
         }
       } else {
@@ -491,7 +498,7 @@ client.on(Events.MessageCreate, async (message) => {
 
       if (!prompt) {
         await message.reply(
-          'Please include a message or question when you mention me!'
+          'please include a message or question when you mention me'
         )
         return
       }
@@ -549,7 +556,7 @@ client.on(Events.MessageCreate, async (message) => {
         } else {
           console.error('Grok generation failed:', result.error)
           await message.reply(
-            `Failed to generate response: ${result.error.message}`
+            `failed to generate response: ${result.error.message}`
           )
         }
       } catch (e) {
@@ -630,7 +637,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           // Send successful generations
           let content = ''
           if (errors.length > 0) {
-            content = `⚠️ Some generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+            content = `some generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
           }
 
           const sent = await channel.send({
@@ -650,7 +657,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         } else {
           // All generations failed
           await interaction.editReply(
-            `❌ Retry failed - all generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+            `retry failed - all generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
           )
         }
       } else {
@@ -680,7 +687,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const ctx = grokGenerationContext.get(interaction.message.id)
     if (!ctx) {
       await interaction.reply({
-        content: 'Context expired. Please mention me again with your question.',
+        content: 'context expired. please mention me again with your question.',
         ephemeral: true
       })
       return
@@ -738,17 +745,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } else {
         console.error('Grok retry failed:', result.error)
         await interaction.editReply(
-          `Failed to generate response: ${result.error.message}`
+          `failed to generate response: ${result.error.message}`
         )
       }
     } catch (e) {
       console.error('Grok retry error:', e)
       try {
         if (interaction.deferred || interaction.replied) {
-          await interaction.editReply('Failed to generate response')
+          await interaction.editReply('failed to generate response')
         } else {
           await interaction.reply({
-            content: 'Failed to generate response',
+            content: 'failed to generate response',
             ephemeral: true
           })
         }
