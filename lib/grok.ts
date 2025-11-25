@@ -112,6 +112,7 @@ export function generateGrokResponse(
             prompt: userPrompt,
             providerOptions: {
               xai: {
+                reasoningEffort: 'low',
                 searchParameters: {
                   mode: 'on',
                   returnCitations: true,
