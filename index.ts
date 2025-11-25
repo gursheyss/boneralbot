@@ -35,7 +35,7 @@ const PARKING_DELAY = 60 * 1000 // 1 minute
 
 const generationContext = new Map<
   string,
-  { prompt: string; imageUrls: string[] }
+  { prompt: string; imageUrls: string[]; userId: string }
 >()
 
 const grokGenerationContext = new Map<
@@ -189,7 +189,7 @@ client.on(Events.MessageCreate, async (message) => {
 
     const stopTyping = startTyping(message.channel)
     try {
-      const result = await generateImage(prompt, [])
+      const result = await generateImage(prompt, [], message.author.id)
       stopTyping()
 
       if (result.isOk()) {
@@ -203,7 +203,10 @@ client.on(Events.MessageCreate, async (message) => {
             })
           )
         } else {
-          console.error('Seedream generation failed:', result.value.seedream.error)
+          console.error(
+            'Seedream generation failed:',
+            result.value.seedream.error
+          )
           errors.push(`Seedream: ${result.value.seedream.error.message}`)
         }
 
@@ -214,7 +217,10 @@ client.on(Events.MessageCreate, async (message) => {
             })
           )
         } else {
-          console.error('Nano-Banana generation failed:', result.value.nanoBanana.error)
+          console.error(
+            'Nano-Banana generation failed:',
+            result.value.nanoBanana.error
+          )
           errors.push(`Nano-Banana: ${result.value.nanoBanana.error.message}`)
         }
 
@@ -229,7 +235,11 @@ client.on(Events.MessageCreate, async (message) => {
             files,
             components: [buildRetryRow()]
           })
-          generationContext.set(sent.id, { prompt, imageUrls: [] })
+          generationContext.set(sent.id, {
+            prompt,
+            imageUrls: [],
+            userId: message.author.id
+          })
         } else {
           await message.reply(
             `❌ All generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
@@ -319,7 +329,11 @@ client.on(Events.MessageCreate, async (message) => {
     return
   }
 
-  if (client.user && message.mentions.has(client.user) && message.attachments.size > 0) {
+  if (
+    client.user &&
+    message.mentions.has(client.user) &&
+    message.attachments.size > 0
+  ) {
     const imageAttachments = message.attachments.filter((attachment) =>
       attachment.contentType?.startsWith('image/')
     )
@@ -332,7 +346,9 @@ client.on(Events.MessageCreate, async (message) => {
       const targetVideo = videoAttachments.first()
 
       if (!swapImage || !targetVideo) {
-        await message.reply('could not read the provided media, please try again.')
+        await message.reply(
+          'could not read the provided media, please try again.'
+        )
         return
       }
 
@@ -351,11 +367,15 @@ client.on(Events.MessageCreate, async (message) => {
           })
         } else {
           console.error('video face swap failed:', result.error)
-          await message.reply(`failed to swap video faces: ${result.error.message}`)
+          await message.reply(
+            `failed to swap video faces: ${result.error.message}`
+          )
         }
       } catch (e) {
         console.error('video faceswap error:', e)
-        await message.reply('an error occurred while swapping faces in the video.')
+        await message.reply(
+          'an error occurred while swapping faces in the video.'
+        )
       } finally {
         stopTyping()
       }
@@ -409,7 +429,11 @@ client.on(Events.MessageCreate, async (message) => {
 
           const stopTyping = startTyping(message.channel)
           try {
-            const result = await generateImage(prompt, imageUrls)
+            const result = await generateImage(
+              prompt,
+              imageUrls,
+              message.author.id
+            )
             // Stop typing before sending the reply
             stopTyping()
 
@@ -459,7 +483,11 @@ client.on(Events.MessageCreate, async (message) => {
                   files,
                   components: [buildRetryRow()]
                 })
-                generationContext.set(sent.id, { prompt, imageUrls })
+                generationContext.set(sent.id, {
+                  prompt,
+                  imageUrls,
+                  userId: message.author.id
+                })
               } else {
                 // All generations failed
                 await message.reply(
@@ -510,7 +538,7 @@ client.on(Events.MessageCreate, async (message) => {
     const stopTyping = startTyping(message.channel)
     try {
       const imageUrls = imageAttachments.map((attachment) => attachment.url)
-      const result = await generateImage(prompt, imageUrls)
+      const result = await generateImage(prompt, imageUrls, message.author.id)
       // Stop typing before sending the reply
       stopTyping()
 
@@ -558,7 +586,11 @@ client.on(Events.MessageCreate, async (message) => {
             files,
             components: [buildRetryRow()]
           })
-          generationContext.set(sent.id, { prompt, imageUrls })
+          generationContext.set(sent.id, {
+            prompt,
+            imageUrls,
+            userId: message.author.id
+          })
         } else {
           // All generations failed
           await message.reply(
@@ -698,7 +730,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const stopTyping = startTyping(channel)
     try {
       await interaction.deferReply({ ephemeral: true })
-      const result = await generateImage(ctx.prompt, ctx.imageUrls)
+      const result = await generateImage(ctx.prompt, ctx.imageUrls, ctx.userId)
       if (result.isOk()) {
         const files: AttachmentBuilder[] = []
         const errors: string[] = []
@@ -812,7 +844,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       })
 
       if (result.isOk()) {
-        let response = result.value.text
+        const response = result.value.text
         const reasoning = result.value.reasoning
 
         // Build message with reasoning as subtext if available
