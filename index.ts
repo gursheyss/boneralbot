@@ -7,12 +7,9 @@ import {
   AttachmentBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle,
-  TextChannel,
-  DiscordAPIError
+  ButtonStyle
 } from 'discord.js'
 import { startTyping } from './lib/typing.ts'
-import { fetchParkingData, createTextChart } from './lib/parking.ts'
 import { generateImage } from './lib/image.ts'
 import { swapFaceOntoTarget, swapFaceInVideo } from './lib/faceswap.ts'
 import { generateGrokResponse } from './lib/grok.ts'
@@ -29,9 +26,6 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 })
-
-const PARKING_CHANNEL_ID = process.env.PARKING_CHANNEL_ID!
-const PARKING_DELAY = 60 * 1000 // 1 minute
 
 const generationContext = new Map<
   string,
@@ -67,112 +61,8 @@ function buildGrokRetryRow() {
   return row
 }
 
-client.once(Events.ClientReady, async (c) => {
+client.once(Events.ClientReady, (c) => {
   console.log(`Ready! Logged in as ${c.user.tag}`)
-
-  // Auto-update parking ASCII chart: send initial message then edit that same message on a schedule
-  const channelId = PARKING_CHANNEL_ID
-  const channel = (await client.channels.fetch(channelId)) as TextChannel
-  if (!channel) {
-    console.error(`Channel ${channelId} not found`)
-    return
-  }
-
-  let statusMessageId: string | null = null
-
-  // send or recover initial chart
-  try {
-    const initResult = await fetchParkingData()
-    if (!initResult.isOk()) throw initResult.error
-    const initChart = createTextChart(
-      initResult.value.data,
-      initResult.value.websiteTimestamp
-    )
-    const initTs = Math.floor(Date.now() / 1000)
-    const initContent = `\`\`\`\n${initChart}\n\`\`\`\nBot last updated: <t:${initTs}:F>`
-
-    // Try to find an existing parking status message to reuse
-    const headerMarker = 'SJSU Parking Garage Status'
-    const botId = client.user?.id
-    if (botId) {
-      try {
-        const recentMessages = await channel.messages.fetch({ limit: 100 })
-        const candidates = recentMessages.filter(
-          (m) => m.author.id === botId && m.content.includes(headerMarker)
-        )
-        const existing = candidates
-          .sort((a, b) => b.createdTimestamp - a.createdTimestamp)
-          .first()
-
-        if (existing) {
-          try {
-            await existing.edit(initContent)
-            statusMessageId = existing.id
-          } catch (err: any) {
-            if (err instanceof DiscordAPIError && err.code === 10008) {
-              // Message no longer exists, will send a new one below
-            } else {
-              console.error('Error editing existing parking chart', err)
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Failed to search for existing parking chart message', e)
-      }
-    }
-
-    // If we couldn't reuse, send a new message
-    if (!statusMessageId) {
-      const sentMessage = await channel.send(initContent)
-      statusMessageId = sentMessage.id
-    }
-
-    // schedule periodic edits
-    setInterval(async () => {
-      if (!statusMessageId) return
-
-      try {
-        const res = await fetchParkingData()
-        if (res.isOk()) {
-          const chart = createTextChart(
-            res.value.data,
-            res.value.websiteTimestamp
-          )
-          const ts = Math.floor(Date.now() / 1000)
-          const content = `\`\`\`\n${chart}\n\`\`\`\nBot last updated: <t:${ts}:F>`
-
-          // fetch fresh message instance and edit
-          const message = await channel.messages.fetch(statusMessageId)
-          await message.edit(content)
-        } else {
-          console.error('failed to get parking stats', res.error)
-        }
-      } catch (err: any) {
-        if (err instanceof DiscordAPIError && err.code === 10008) {
-          console.warn('Parking chart message deleted, sending new one...')
-          try {
-            const res = await fetchParkingData()
-            if (res.isOk()) {
-              const chart = createTextChart(
-                res.value.data,
-                res.value.websiteTimestamp
-              )
-              const ts = Math.floor(Date.now() / 1000)
-              const content = `\`\`\`\n${chart}\n\`\`\`\nBot last updated: <t:${ts}:F>`
-              const newMessage = await channel.send(content)
-              statusMessageId = newMessage.id
-            }
-          } catch (e) {
-            console.error('Failed to send replacement parking chart', e)
-          }
-        } else {
-          console.error('Error editing parking chart', err)
-        }
-      }
-    }, PARKING_DELAY)
-  } catch (e) {
-    console.error('Failed to send initial parking chart', e)
-  }
 })
 
 client.on(Events.MessageCreate, async (message) => {
@@ -253,33 +143,6 @@ client.on(Events.MessageCreate, async (message) => {
       console.error('failed to generate image', e)
       await message.reply('failed to generate image')
     } finally {
-      stopTyping()
-    }
-    return
-  }
-
-  if (message.content.toLowerCase().trim() === 'parking') {
-    const stopTyping = startTyping(message.channel)
-    try {
-      const result = await fetchParkingData()
-      // Stop typing as soon as the work is done for better UX
-      stopTyping()
-
-      if (result.isOk()) {
-        const chart = createTextChart(
-          result.value.data,
-          result.value.websiteTimestamp
-        )
-        await message.reply('```\n' + chart + '\n```')
-      } else {
-        console.error('failed to get parking stats', result.error)
-        await message.reply('failed to get parking stats')
-      }
-    } catch (e) {
-      console.error('failed to get parking stats', e)
-      await message.reply('failed to get parking stats')
-    } finally {
-      // Ensure typing always stops even if an error occurs above
       stopTyping()
     }
     return
