@@ -178,6 +178,76 @@ client.once(Events.ClientReady, async (c) => {
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return
 
+  // Handle "image <prompt>" command - generate image from text prompt only
+  if (message.content.toLowerCase().startsWith('image ')) {
+    const prompt = message.content.slice(6).trim() // Remove "image " prefix
+
+    if (!prompt) {
+      await message.reply('please include a prompt after "image"')
+      return
+    }
+
+    const stopTyping = startTyping(message.channel)
+    try {
+      const result = await generateImage(prompt, [])
+      stopTyping()
+
+      if (result.isOk()) {
+        const files: AttachmentBuilder[] = []
+        const errors: string[] = []
+
+        if (result.value.seedream.isOk()) {
+          files.push(
+            new AttachmentBuilder(result.value.seedream.value, {
+              name: 'seedream-generated.jpg'
+            })
+          )
+        } else {
+          console.error('Seedream generation failed:', result.value.seedream.error)
+          errors.push(`Seedream: ${result.value.seedream.error.message}`)
+        }
+
+        if (result.value.nanoBanana.isOk()) {
+          files.push(
+            new AttachmentBuilder(result.value.nanoBanana.value, {
+              name: 'nano-banana-generated.jpg'
+            })
+          )
+        } else {
+          console.error('Nano-Banana generation failed:', result.value.nanoBanana.error)
+          errors.push(`Nano-Banana: ${result.value.nanoBanana.error.message}`)
+        }
+
+        if (files.length > 0) {
+          let content = ''
+          if (errors.length > 0) {
+            content = `⚠️ Some generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+          }
+
+          const sent = await message.reply({
+            content: content || undefined,
+            files,
+            components: [buildRetryRow()]
+          })
+          generationContext.set(sent.id, { prompt, imageUrls: [] })
+        } else {
+          await message.reply(
+            `❌ All generations failed:\n${errors.map((e) => `• ${e}`).join('\n')}`
+          )
+        }
+      } else {
+        console.error('failed to generate image', result.error)
+        await message.reply(`failed to generate: ${result.error}`)
+      }
+    } catch (e) {
+      console.error('failed to generate image', e)
+      await message.reply('failed to generate image')
+    } finally {
+      stopTyping()
+    }
+    return
+  }
+
   if (message.content.toLowerCase().trim() === 'parking') {
     const stopTyping = startTyping(message.channel)
     try {
