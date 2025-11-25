@@ -621,15 +621,27 @@ client.on(Events.MessageCreate, async (message) => {
         stopTyping()
 
         if (result.isOk()) {
-          let response = result.value
+          let response = result.value.text
+          const reasoning = result.value.reasoning
+
+          // Build message with reasoning as subtext if available
+          let fullMessage = response
+          if (reasoning) {
+            // Use -# for subtext (small text) in Discord
+            const subtextReasoning = reasoning
+              .split('\n')
+              .map((line) => `-# ${line}`)
+              .join('\n')
+            fullMessage = `${response}\n\n${subtextReasoning}`
+          }
 
           // Discord message limit is 2000 characters
-          if (response.length > 2000) {
-            response = response.substring(0, 1997) + '...'
+          if (fullMessage.length > 2000) {
+            fullMessage = fullMessage.substring(0, 1997) + '...'
           }
 
           const sent = await message.reply({
-            content: response,
+            content: fullMessage,
             components: [buildGrokRetryRow()]
           })
 
@@ -800,15 +812,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
       })
 
       if (result.isOk()) {
-        let response = result.value
+        let response = result.value.text
+        const reasoning = result.value.reasoning
+
+        // Build message with reasoning as subtext if available
+        let fullMessage = response
+        if (reasoning) {
+          // Use -# for subtext (small text) in Discord
+          const subtextReasoning = reasoning
+            .split('\n')
+            .map((line) => `-# ${line}`)
+            .join('\n')
+          fullMessage = `${response}\n\n${subtextReasoning}`
+        }
 
         // Discord message limit is 2000 characters
-        if (response.length > 2000) {
-          response = response.substring(0, 1997) + '...'
+        if (fullMessage.length > 2000) {
+          fullMessage = fullMessage.substring(0, 1997) + '...'
         }
 
         const sent = await channel.send({
-          content: response,
+          content: fullMessage,
           components: [buildGrokRetryRow()]
         })
 

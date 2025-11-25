@@ -77,6 +77,11 @@ export interface GrokInput {
   contextMessages?: FormattedMessage[]
 }
 
+export interface GrokResponse {
+  text: string
+  reasoning?: string
+}
+
 /**
  * Generates a response using Grok via xAI SDK with automatic retry.
  * Includes conversation context if provided.
@@ -84,7 +89,7 @@ export interface GrokInput {
  */
 export function generateGrokResponse(
   input: GrokInput
-): ResultAsync<string, Error> {
+): ResultAsync<GrokResponse, Error> {
   return ResultAsync.fromPromise(
     (async () => {
       let userPrompt = ''
@@ -102,7 +107,7 @@ export function generateGrokResponse(
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           const result = await generateText({
-            model: xai('grok-4-1-fast-non-reasoning'),
+            model: xai('grok-4-1-fast-reasoning'),
             system: GROK_SYSTEM_PROMPT,
             prompt: userPrompt,
             providerOptions: {
@@ -125,7 +130,10 @@ export function generateGrokResponse(
             throw new Error('Grok returned empty response')
           }
 
-          return result.text.trim()
+          return {
+            text: result.text.trim(),
+            reasoning: result.reasoningText?.trim()
+          }
         } catch (error) {
           lastError =
             error instanceof Error ? error : new Error('Unknown error')
