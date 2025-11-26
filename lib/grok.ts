@@ -94,7 +94,10 @@ export function generateGrokResponse(
     (async () => {
       console.log('[grok] starting generation')
       console.log('[grok] prompt:', input.prompt)
-      console.log('[grok] context messages:', input.contextMessages?.length ?? 0)
+      console.log(
+        '[grok] context messages:',
+        input.contextMessages?.length ?? 0
+      )
 
       let userPrompt = ''
 
@@ -119,7 +122,6 @@ export function generateGrokResponse(
             prompt: userPrompt,
             providerOptions: {
               xai: {
-                reasoningEffort: 'low',
                 searchParameters: {
                   mode: 'on',
                   returnCitations: true,
@@ -137,7 +139,10 @@ export function generateGrokResponse(
           console.log('[grok] got response')
           console.log('[grok] text length:', result.text?.length ?? 0)
           console.log('[grok] reasoning:', result.reasoningText ? 'yes' : 'no')
-          console.log('[grok] reasoning length:', result.reasoningText?.length ?? 0)
+          console.log(
+            '[grok] reasoning length:',
+            result.reasoningText?.length ?? 0
+          )
           console.log('[grok] full result keys:', Object.keys(result))
 
           if (!result.text || result.text.trim().length === 0) {
@@ -149,7 +154,10 @@ export function generateGrokResponse(
             text: result.text.trim(),
             reasoning: result.reasoningText?.trim()
           }
-          console.log('[grok] returning response with reasoning:', !!response.reasoning)
+          console.log(
+            '[grok] returning response with reasoning:',
+            !!response.reasoning
+          )
           return response
         } catch (error) {
           lastError =
