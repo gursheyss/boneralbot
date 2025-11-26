@@ -29,7 +29,7 @@ const client = new Client({
 
 const generationContext = new Map<
   string,
-  { prompt: string; imageUrls: string[]; userId: string }
+  { prompt: string; imageUrls: string[]; userId: string; username?: string }
 >()
 
 const grokGenerationContext = new Map<
@@ -85,7 +85,12 @@ client.on(Events.MessageCreate, async (message) => {
 
       const stopTyping = startTyping(message.channel)
       try {
-        const result = await generateImage(prompt, [], message.author.id)
+        const result = await generateImage(
+          prompt,
+          [],
+          message.author.id,
+          message.author.username
+        )
         stopTyping()
 
         if (result.isOk()) {
@@ -101,7 +106,8 @@ client.on(Events.MessageCreate, async (message) => {
             generationContext.set(sent.id, {
               prompt,
               imageUrls: [],
-              userId: message.author.id
+              userId: message.author.id,
+              username: message.author.username
             })
           } else {
             console.error(
@@ -273,7 +279,8 @@ client.on(Events.MessageCreate, async (message) => {
             const result = await generateImage(
               prompt,
               imageUrls,
-              message.author.id
+              message.author.id,
+              message.author.username
             )
             // Stop typing before sending the reply
             stopTyping()
@@ -291,7 +298,8 @@ client.on(Events.MessageCreate, async (message) => {
                 generationContext.set(sent.id, {
                   prompt,
                   imageUrls,
-                  userId: message.author.id
+                  userId: message.author.id,
+                  username: message.author.username
                 })
               } else {
                 console.error(
@@ -346,7 +354,12 @@ client.on(Events.MessageCreate, async (message) => {
     const stopTyping = startTyping(message.channel)
     try {
       const imageUrls = imageAttachments.map((attachment) => attachment.url)
-      const result = await generateImage(prompt, imageUrls, message.author.id)
+      const result = await generateImage(
+        prompt,
+        imageUrls,
+        message.author.id,
+        message.author.username
+      )
       // Stop typing before sending the reply
       stopTyping()
 
@@ -363,7 +376,8 @@ client.on(Events.MessageCreate, async (message) => {
           generationContext.set(sent.id, {
             prompt,
             imageUrls,
-            userId: message.author.id
+            userId: message.author.id,
+            username: message.author.username
           })
         } else {
           console.error(
@@ -507,7 +521,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const stopTyping = startTyping(channel)
     try {
       await interaction.deferReply({ ephemeral: true })
-      const result = await generateImage(ctx.prompt, ctx.imageUrls, ctx.userId)
+      const result = await generateImage(
+        ctx.prompt,
+        ctx.imageUrls,
+        ctx.userId,
+        ctx.username
+      )
       if (result.isOk()) {
         if (result.value.nanoBanana.isOk()) {
           const sent = await channel.send({

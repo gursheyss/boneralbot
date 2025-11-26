@@ -11,6 +11,7 @@ const NANO_BANANA_RATE_WINDOW_SECONDS = 60 * 60 // 1 hour
 
 const RATE_LIMIT_KEY = 'nano-banana-pro:requests'
 const LEADERBOARD_KEY = 'nano-banana-pro:leaderboard'
+const USERNAMES_KEY = 'nano-banana-pro:usernames'
 
 async function canUseNanoBanana(): Promise<boolean> {
   const now = Date.now()
@@ -24,7 +25,7 @@ async function canUseNanoBanana(): Promise<boolean> {
   return (count as number) < NANO_BANANA_RATE_LIMIT
 }
 
-async function recordNanoBananaRequest(userId: string): Promise<void> {
+async function recordNanoBananaRequest(userId: string, username?: string): Promise<void> {
   const now = Date.now()
 
   // Add to rate limit tracking (score = timestamp, member = unique id)
@@ -34,10 +35,15 @@ async function recordNanoBananaRequest(userId: string): Promise<void> {
 
   // Increment user's count in leaderboard
   await redis.send('ZINCRBY', [LEADERBOARD_KEY, '1', userId])
+  if (username) {
+    await redis.send('HSET', [USERNAMES_KEY, userId, username])
+  }
   console.log('[image] recorded nano-banana request for user:', userId)
 }
 
-async function getLeaderboard(): Promise<{ userId: string; count: number }[]> {
+type LeaderboardEntry = { userId: string; username?: string; count: number }
+
+async function getLeaderboard(): Promise<LeaderboardEntry[]> {
   // Get top 10 users by usage count (descending)
   const rawResults = (await redis.send('ZREVRANGE', [
     LEADERBOARD_KEY,
@@ -56,7 +62,7 @@ async function getLeaderboard(): Promise<{ userId: string; count: number }[]> {
       )
     : []
 
-  const leaderboard: { userId: string; count: number }[] = []
+  const leaderboard: LeaderboardEntry[] = []
   for (let i = 0; i + 1 < flatResults.length; i += 2) {
     const userId = flatResults[i]
     const countStr = flatResults[i + 1]
@@ -68,6 +74,20 @@ async function getLeaderboard(): Promise<{ userId: string; count: number }[]> {
         count
       })
     }
+  }
+  // Attach cached usernames (best-effort)
+  if (leaderboard.length > 0) {
+    const ids = leaderboard.map((entry) => entry.userId)
+    const usernames = (await redis.send('HMGET', [USERNAMES_KEY, ...ids])) as
+      | string[]
+      | null
+      | undefined
+    leaderboard.forEach((entry, index) => {
+      const name = usernames?.[index]
+      if (name && typeof name === 'string' && name.trim()) {
+        entry.username = name
+      }
+    })
   }
   console.log('[image] leaderboard entries:', leaderboard.length)
   return leaderboard
@@ -83,15 +103,13 @@ async function getRemainingRequests(): Promise<number> {
   return Math.max(0, NANO_BANANA_RATE_LIMIT - (count as number))
 }
 
-function formatLeaderboard(
-  leaderboard: { userId: string; count: number }[]
-): string {
+function formatLeaderboard(leaderboard: LeaderboardEntry[]): string {
   if (leaderboard.length === 0) {
     return 'No usage yet!'
   }
 
   const lines = leaderboard.map(
-    (entry) => `<@${entry.userId}>: ${entry.count}`
+    (entry) => `${entry.username ?? `User ${entry.userId}`}: ${entry.count}`
   )
 
   return `Image generation count:\n${lines.join('\n')}`
@@ -104,7 +122,8 @@ export interface GenerationResult {
 export function generateImage(
   prompt: string,
   imageUrls: string[],
-  userId?: string
+  userId?: string,
+  username?: string
 ): ResultAsync<GenerationResult, Error> {
   return ResultAsync.fromPromise(
     (async () => {
@@ -148,7 +167,7 @@ export function generateImage(
           .andThen((output) => {
             console.log('[image] nano-banana replicate response received')
             if (userId) {
-              recordNanoBananaRequest(userId)
+              recordNanoBananaRequest(userId, username)
             }
             return ResultAsync.fromPromise(
               // @ts-expect-error - yes it does
