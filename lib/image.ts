@@ -39,16 +39,33 @@ async function recordNanoBananaRequest(userId: string): Promise<void> {
 
 async function getLeaderboard(): Promise<{ userId: string; count: number }[]> {
   // Get top 10 users by usage count (descending)
-  const results = (await redis.send('ZREVRANGE', [LEADERBOARD_KEY, '0', '9', 'WITHSCORES'])) as string[]
+  const rawResults = (await redis.send('ZREVRANGE', [
+    LEADERBOARD_KEY,
+    '0',
+    '9',
+    'WITHSCORES'
+  ])) as unknown
+
+  /**
+   * Bun's Redis client can return either a flat string array
+   * or an array of string tuples for WITHSCORES. Normalize to a flat array.
+   */
+  const flatResults: string[] = Array.isArray(rawResults)
+    ? rawResults.flatMap((entry) =>
+        Array.isArray(entry) ? entry.map((v) => String(v)) : [String(entry)]
+      )
+    : []
 
   const leaderboard: { userId: string; count: number }[] = []
-  for (let i = 0; i + 1 < results.length; i += 2) {
-    const userId = results[i]
-    const countStr = results[i + 1]
-    if (userId && countStr) {
+  for (let i = 0; i + 1 < flatResults.length; i += 2) {
+    const userId = flatResults[i]
+    const countStr = flatResults[i + 1]
+    const count = parseInt(countStr, 10)
+
+    if (userId && Number.isFinite(count)) {
       leaderboard.push({
         userId,
-        count: parseInt(countStr, 10)
+        count
       })
     }
   }
