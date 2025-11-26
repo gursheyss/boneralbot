@@ -89,46 +89,13 @@ client.on(Events.MessageCreate, async (message) => {
         stopTyping()
 
         if (result.isOk()) {
-          const files: AttachmentBuilder[] = []
-          const errors: string[] = []
-
-          if (result.value.seedream.isOk()) {
-            files.push(
-              new AttachmentBuilder(result.value.seedream.value, {
-                name: 'seedream-generated.jpg'
-              })
-            )
-          } else {
-            console.error(
-              'Seedream generation failed:',
-              result.value.seedream.error
-            )
-            errors.push(`Seedream: ${result.value.seedream.error.message}`)
-          }
-
           if (result.value.nanoBanana.isOk()) {
-            files.push(
-              new AttachmentBuilder(result.value.nanoBanana.value, {
-                name: 'nano-banana-generated.jpg'
-              })
-            )
-          } else {
-            console.error(
-              'Nano-Banana generation failed:',
-              result.value.nanoBanana.error
-            )
-            errors.push(`Nano-Banana: ${result.value.nanoBanana.error.message}`)
-          }
-
-          if (files.length > 0) {
-            let content = ''
-            if (errors.length > 0) {
-              content = `some generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
-            }
-
             const sent = await message.reply({
-              content: content || undefined,
-              files,
+              files: [
+                new AttachmentBuilder(result.value.nanoBanana.value, {
+                  name: 'generated.jpg'
+                })
+              ],
               components: [buildRetryRow()]
             })
             generationContext.set(sent.id, {
@@ -137,8 +104,12 @@ client.on(Events.MessageCreate, async (message) => {
               userId: message.author.id
             })
           } else {
+            console.error(
+              'Generation failed:',
+              result.value.nanoBanana.error
+            )
             await message.reply(
-              `all generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
+              `failed to generate: ${result.value.nanoBanana.error.message}`
             )
           }
         } else {
@@ -308,49 +279,13 @@ client.on(Events.MessageCreate, async (message) => {
             stopTyping()
 
             if (result.isOk()) {
-              const files: AttachmentBuilder[] = []
-              const errors: string[] = []
-
-              if (result.value.seedream.isOk()) {
-                files.push(
-                  new AttachmentBuilder(result.value.seedream.value, {
-                    name: 'seedream-generated.jpg'
-                  })
-                )
-              } else {
-                console.error(
-                  'Seedream generation failed:',
-                  result.value.seedream.error
-                )
-                errors.push(`Seedream: ${result.value.seedream.error.message}`)
-              }
-
               if (result.value.nanoBanana.isOk()) {
-                files.push(
-                  new AttachmentBuilder(result.value.nanoBanana.value, {
-                    name: 'nano-banana-generated.jpg'
-                  })
-                )
-              } else {
-                console.error(
-                  'Nano-Banana generation failed:',
-                  result.value.nanoBanana.error
-                )
-                errors.push(
-                  `Nano-Banana: ${result.value.nanoBanana.error.message}`
-                )
-              }
-
-              if (files.length > 0) {
-                // Send successful generations
-                let content = ''
-                if (errors.length > 0) {
-                  content = `some generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
-                }
-
                 const sent = await message.reply({
-                  content: content || undefined,
-                  files,
+                  files: [
+                    new AttachmentBuilder(result.value.nanoBanana.value, {
+                      name: 'generated.jpg'
+                    })
+                  ],
                   components: [buildRetryRow()]
                 })
                 generationContext.set(sent.id, {
@@ -359,9 +294,12 @@ client.on(Events.MessageCreate, async (message) => {
                   userId: message.author.id
                 })
               } else {
-                // All generations failed
+                console.error(
+                  'Generation failed:',
+                  result.value.nanoBanana.error
+                )
                 await message.reply(
-                  `all generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
+                  `failed to generate: ${result.value.nanoBanana.error.message}`
                 )
               }
             } else {
@@ -413,47 +351,13 @@ client.on(Events.MessageCreate, async (message) => {
       stopTyping()
 
       if (result.isOk()) {
-        const files: AttachmentBuilder[] = []
-        const errors: string[] = []
-
-        if (result.value.seedream.isOk()) {
-          files.push(
-            new AttachmentBuilder(result.value.seedream.value, {
-              name: 'seedream-generated.jpg'
-            })
-          )
-        } else {
-          console.error(
-            'Seedream generation failed:',
-            result.value.seedream.error
-          )
-          errors.push(`Seedream: ${result.value.seedream.error.message}`)
-        }
-
         if (result.value.nanoBanana.isOk()) {
-          files.push(
-            new AttachmentBuilder(result.value.nanoBanana.value, {
-              name: 'nano-banana-generated.jpg'
-            })
-          )
-        } else {
-          console.error(
-            'Nano-Banana generation failed:',
-            result.value.nanoBanana.error
-          )
-          errors.push(`Nano-Banana: ${result.value.nanoBanana.error.message}`)
-        }
-
-        if (files.length > 0) {
-          // Send successful generations
-          let content = ''
-          if (errors.length > 0) {
-            content = `some generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
-          }
-
           const sent = await message.reply({
-            content: content || undefined,
-            files,
+            files: [
+              new AttachmentBuilder(result.value.nanoBanana.value, {
+                name: 'generated.jpg'
+              })
+            ],
             components: [buildRetryRow()]
           })
           generationContext.set(sent.id, {
@@ -462,9 +366,12 @@ client.on(Events.MessageCreate, async (message) => {
             userId: message.author.id
           })
         } else {
-          // All generations failed
+          console.error(
+            'Generation failed:',
+            result.value.nanoBanana.error
+          )
           await message.reply(
-            `all generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
+            `failed to generate: ${result.value.nanoBanana.error.message}`
           )
         }
       } else {
@@ -602,62 +509,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.deferReply({ ephemeral: true })
       const result = await generateImage(ctx.prompt, ctx.imageUrls, ctx.userId)
       if (result.isOk()) {
-        const files: AttachmentBuilder[] = []
-        const errors: string[] = []
-
-        if (result.value.seedream.isOk()) {
-          files.push(
-            new AttachmentBuilder(result.value.seedream.value, {
-              name: 'seedream-generated.jpg'
-            })
-          )
-        } else {
-          console.error(
-            'Seedream generation failed:',
-            result.value.seedream.error
-          )
-          errors.push(`Seedream: ${result.value.seedream.error.message}`)
-        }
-
         if (result.value.nanoBanana.isOk()) {
-          files.push(
-            new AttachmentBuilder(result.value.nanoBanana.value, {
-              name: 'nano-banana-generated.jpg'
-            })
-          )
-        } else {
-          console.error(
-            'Nano-Banana generation failed:',
-            result.value.nanoBanana.error
-          )
-          errors.push(`Nano-Banana: ${result.value.nanoBanana.error.message}`)
-        }
-
-        if (files.length > 0) {
-          // Send successful generations
-          let content = ''
-          if (errors.length > 0) {
-            content = `some generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
-          }
-
           const sent = await channel.send({
-            content: content || undefined,
-            files,
+            files: [
+              new AttachmentBuilder(result.value.nanoBanana.value, {
+                name: 'generated.jpg'
+              })
+            ],
             components: [buildRetryRow()]
           })
           generationContext.set(sent.id, ctx)
-
-          if (errors.length > 0) {
-            await interaction.editReply(
-              'Retry complete with some errors - check the message above'
-            )
-          } else {
-            await interaction.editReply('Retry complete')
-          }
+          await interaction.editReply('Retry complete')
         } else {
-          // All generations failed
+          console.error(
+            'Generation failed:',
+            result.value.nanoBanana.error
+          )
           await interaction.editReply(
-            `retry failed - all generations failed:\n${errors.map((e) => `- ${e}`).join('\n')}`
+            `retry failed: ${result.value.nanoBanana.error.message}`
           )
         }
       } else {

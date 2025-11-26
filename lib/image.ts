@@ -81,7 +81,6 @@ function formatLeaderboard(
 }
 
 export interface GenerationResult {
-  seedream: Result<Buffer, Error>
   nanoBanana: Result<Buffer, Error>
 }
 
@@ -96,41 +95,6 @@ export function generateImage(
       console.log('[image] prompt:', prompt)
       console.log('[image] image urls:', imageUrls.length)
       console.log('[image] user id:', userId ?? 'none')
-
-      // Start both generations
-      console.log('[image] starting seedream generation')
-      const seedreamInput = {
-        prompt: prompt,
-        image_input: imageUrls
-      } as const
-
-      const seedreamResult = await ResultAsync.fromPromise(
-        replicate.run('bytedance/seedream-4', { input: seedreamInput }),
-        (e) =>
-          e instanceof Error ? e : new Error('Seedream generation failed')
-      )
-        .andThen((output) => {
-          console.log('[image] seedream replicate response received')
-          return ResultAsync.fromPromise(
-            // @ts-expect-error - yes it does
-            fetch(output[0].url()),
-            (e) => (e instanceof Error ? e : new Error('Seedream fetch failed'))
-          )
-        })
-        .andThen((response) => {
-          console.log('[image] seedream fetch complete, status:', response.status)
-          return ResultAsync.fromPromise(
-            response.arrayBuffer().then((ab) => Buffer.from(ab)),
-            (e) =>
-              e instanceof Error ? e : new Error('Seedream buffer failed')
-          )
-        })
-
-      if (seedreamResult.isOk()) {
-        console.log('[image] seedream success, buffer size:', seedreamResult.value.length)
-      } else {
-        console.error('[image] seedream failed:', seedreamResult.error.message)
-      }
 
       // Check rate limit before making nano-banana-pro request
       let nanoBananaResult: Result<Buffer, Error>
@@ -201,14 +165,9 @@ export function generateImage(
       }
 
       console.log('[image] generation complete')
-      console.log('[image] seedream:', seedreamResult.isOk() ? 'success' : 'failed')
       console.log('[image] nano-banana:', nanoBananaResult.isOk() ? 'success' : 'failed')
 
       return {
-        seedream: seedreamResult.match(
-          (buffer) => ok(buffer),
-          (error) => err(error)
-        ),
         nanoBanana: nanoBananaResult
       }
     })(),
