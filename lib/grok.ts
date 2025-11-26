@@ -117,7 +117,7 @@ export function generateGrokResponse(
         console.log(`[grok] attempt ${attempt}/${maxRetries}`)
         try {
           const result = await generateText({
-            model: xai('grok-4-1-fast-reasoning'),
+            model: xai('grok-4-1-fast-non-reasoning'),
             system: GROK_SYSTEM_PROMPT,
             prompt: userPrompt,
             providerOptions: {
