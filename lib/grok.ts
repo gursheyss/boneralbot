@@ -129,6 +129,11 @@ export function generateGrokResponse(
                   sources: [
                     {
                       type: 'x'
+                    },
+                    {
+                      type: 'web',
+                      country: 'US',
+                      safeSearch: false
                     }
                   ]
                 }
