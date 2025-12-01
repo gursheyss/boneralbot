@@ -18,6 +18,12 @@ import {
   fetchThreadChain,
   type FormattedMessage
 } from './lib/context.ts'
+import {
+  startBuildSession,
+  handleThreadMessage,
+  getSessionByThread,
+  cleanupStaleSessions
+} from './lib/build'
 
 const client = new Client({
   intents: [
@@ -63,10 +69,22 @@ function buildGrokRetryRow() {
 
 client.once(Events.ClientReady, (c) => {
   console.log(`Ready! Logged in as ${c.user.tag}`)
+
+  // Cleanup stale build sessions every 30 minutes
+  setInterval(() => cleanupStaleSessions(), 30 * 60 * 1000)
 })
 
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return
+
+  // Handle messages in build threads
+  if (message.channel.isThread()) {
+    const session = getSessionByThread(message.channel.id)
+    if (session) {
+      await handleThreadMessage(message.channel, message.content)
+      return
+    }
+  }
 
   // Handle "@bot image <prompt>" command - generate image from text prompt only
   if (client.user && message.mentions.has(client.user)) {
@@ -128,6 +146,18 @@ client.on(Events.MessageCreate, async (message) => {
       } finally {
         stopTyping()
       }
+      return
+    }
+
+    // @bot build <description> - Start a build session
+    if (cleaned.toLowerCase().startsWith('build ')) {
+      const description = cleaned.slice(6).trim()
+      if (!description) {
+        await message.reply('Please provide a description of what you want to build.')
+        return
+      }
+
+      await startBuildSession(message, description)
       return
     }
   }
