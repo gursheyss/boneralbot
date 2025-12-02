@@ -1,24 +1,49 @@
 import type { Message, ThreadChannel, TextChannel } from 'discord.js'
 import type { BuildSession } from './types'
-import { createSandbox, deleteSandbox } from './daytona'
+import { createSandbox, deleteSandbox } from './cloudflare'
 import {
   cloneRepo,
   createBranch,
   createDraftPR,
   commitAll,
-  markPRReady
+  markPRReady,
+  protectSandboxFolder,
 } from './git'
 import {
   installOpenCode,
   configureOpenCode,
   createOpenCodeSession,
   sendPromptToOpenCode,
-  cleanupOpenCodeSession
+  cleanupOpenCodeSession,
 } from './opencode'
 import { startTyping } from '../typing'
 
 const activeSessions = new Map<string, BuildSession>()
 const threadToSession = new Map<string, string>()
+
+interface ProgressStep {
+  label: string
+  status: 'pending' | 'active' | 'done' | 'error'
+}
+
+function formatProgress(steps: ProgressStep[], description: string): string {
+  const lines = [`**Building:** ${description}\n`]
+
+  for (const step of steps) {
+    const icon =
+      step.status === 'done'
+        ? '✓'
+        : step.status === 'active'
+          ? '►'
+          : step.status === 'error'
+            ? '✗'
+            : '○'
+    const style = step.status === 'active' ? '**' : ''
+    lines.push(`${icon} ${style}${step.label}${style}`)
+  }
+
+  return lines.join('\n')
+}
 
 export function getSessionByThread(threadId: string): BuildSession | undefined {
   const sessionId = threadToSession.get(threadId)
@@ -34,35 +59,79 @@ export async function startBuildSession(
 
   const thread = await message.startThread({
     name: `Build: ${description.slice(0, 50)}`,
-    autoArchiveDuration: 1440
+    autoArchiveDuration: 1440,
   })
 
-  await thread.send(
-    `Starting build session...\n\n**Description:** ${description}`
-  )
+  const steps: ProgressStep[] = [
+    { label: 'Creating sandbox', status: 'pending' },
+    { label: 'Cloning repository', status: 'pending' },
+    { label: `Creating branch \`${branch}\``, status: 'pending' },
+    { label: 'Pushing branch', status: 'pending' },
+    { label: 'Creating draft PR', status: 'pending' },
+    { label: 'Installing dependencies', status: 'pending' },
+    { label: 'Configuring OpenCode', status: 'pending' },
+  ]
+
+  const statusMsg = await thread.send(formatProgress(steps, description))
+
+  const updateProgress = async (stepIndex: number, status: ProgressStep['status']) => {
+    steps[stepIndex].status = status
+    await statusMsg.edit(formatProgress(steps, description)).catch(() => {})
+  }
+
+  let sandbox
+  let prNumber = 0
+  let prUrl = ''
 
   try {
-    await thread.send('Creating development environment...')
-    const sandbox = await createSandbox(sessionId, message.author.id)
+    // Step 0: Create sandbox
+    await updateProgress(0, 'active')
+    sandbox = await createSandbox(sessionId, message.author.id)
+    await updateProgress(0, 'done')
 
-    await thread.send('Cloning repository...')
+    // Step 1: Clone repo
+    await updateProgress(1, 'active')
     await cloneRepo(sandbox)
+    await protectSandboxFolder(sandbox)
+    await updateProgress(1, 'done')
 
-    await thread.send(`Creating branch \`${branch}\`...`)
+    // Step 2: Create branch
+    await updateProgress(2, 'active')
     await createBranch(sandbox, branch)
+    await updateProgress(2, 'done')
 
-    await thread.send('Creating draft PR...')
-    const { prNumber, prUrl } = await createDraftPR(
+    // Step 3: Push branch to remote
+    await updateProgress(3, 'active')
+    await commitAll(
+      sandbox,
+      'chore: initialize build session',
+      message.author.username,
+      true
+    )
+    await updateProgress(3, 'done')
+
+    // Step 4: Create draft PR
+    await updateProgress(4, 'active')
+    const pr = await createDraftPR(
       sandbox,
       branch,
       `Build: ${description.slice(0, 60)}`,
       `Automated build session started by <@${message.author.id}>\n\n**Description:**\n${description}`
     )
+    prNumber = pr.prNumber
+    prUrl = pr.prUrl
+    await updateProgress(4, 'done')
 
-    await thread.send('Setting up OpenCode...')
+    // Step 5: Install dependencies
+    await updateProgress(5, 'active')
     await installOpenCode(sandbox)
+    await updateProgress(5, 'done')
+
+    // Step 6: Configure OpenCode
+    await updateProgress(6, 'active')
     await configureOpenCode(sandbox)
     await createOpenCodeSession(sandbox)
+    await updateProgress(6, 'done')
 
     const session: BuildSession = {
       id: sessionId,
@@ -74,26 +143,32 @@ export async function startBuildSession(
       branch,
       prNumber,
       prUrl,
-      repoPath: 'workspace',
+      repoPath: '/workspace/repo',
       createdAt: new Date(),
-      status: 'active'
+      status: 'active',
     }
 
     activeSessions.set(sessionId, session)
     threadToSession.set(thread.id, sessionId)
 
-    await thread.send(
-      `Build environment ready!\n\n` +
+    // Final success message
+    await statusMsg.edit(
+      `✓ **Ready!**\n\n` +
         `**PR:** ${prUrl}\n\n` +
-        `Send messages in this thread to instruct OpenCode. ` +
-        `Say \`done\` when finished to mark the PR ready for review.`
+        `Send messages to instruct OpenCode.\n` +
+        `Say \`done\` when finished.`
     )
 
     await handleThreadMessage(thread, description, session)
 
     return session
   } catch (error) {
-    await thread.send(`Failed to start build session: ${error}`)
+    // Mark current active step as error
+    const activeStep = steps.findIndex((s) => s.status === 'active')
+    if (activeStep !== -1) {
+      await updateProgress(activeStep, 'error')
+    }
+    await thread.send(`\`\`\`\n${error}\n\`\`\``)
     return null
   }
 }

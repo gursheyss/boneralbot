@@ -1,0 +1,37 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "sandbox",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-05-06",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": {
+		"enabled": true
+	},
+	"vars": {
+		// SANDBOX_AUTH_TOKEN and OPENCODE_API_KEY should be set via:
+		// wrangler secret put SANDBOX_AUTH_TOKEN
+		// wrangler secret put OPENCODE_API_KEY
+	},
+	"containers": [
+		{
+			"class_name": "Sandbox",
+			"image": "./Dockerfile",
+			"instance_type": "standard",
+			"max_instances": 5
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"class_name": "Sandbox",
+				"name": "Sandbox"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"new_sqlite_classes": ["Sandbox"],
+			"tag": "v1"
+		}
+	]
+}
