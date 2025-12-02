@@ -7,10 +7,12 @@ import {
   AttachmentBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle
+  ButtonStyle,
+  Message
 } from 'discord.js'
 import { startTyping } from './lib/typing.ts'
 import { generateImage } from './lib/image.ts'
+import { getRandomCat, getRandomDog, getRandomNSFW } from './lib/random.ts'
 import { swapFaceOntoTarget, swapFaceInVideo } from './lib/faceswap.ts'
 import { generateGrokResponse } from './lib/grok.ts'
 import {
@@ -61,6 +63,44 @@ function buildGrokRetryRow() {
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(retry)
   return row
+}
+
+import { type Result } from 'neverthrow'
+
+async function handleRandomImageCommand(
+  message: Message,
+  fetcher: () => Promise<Result<string | { attachment: Buffer; name: string } | { content: string }, Error>>,
+  name: string
+) {
+  let stopTyping = () => {}
+  if ('sendTyping' in message.channel) {
+    stopTyping = startTyping(message.channel as any)
+  }
+
+  try {
+    const result = await fetcher()
+    stopTyping()
+
+    if (result.isOk()) {
+      const value = result.value
+      if (typeof value === 'object' && 'content' in value && typeof value.content === 'string') {
+        await message.reply(value.content)
+      } else {
+        await message.reply({
+          // @ts-ignore: Discord.js types might complain but this is valid for string | AttachmentPayload
+          files: [value]
+        })
+      }
+    } else {
+      console.error(`${name} fetch failed:`, result.error)
+      await message.reply(`failed to fetch ${name} image`)
+    }
+  } catch (e) {
+    console.error(`${name} fetch error:`, e)
+    await message.reply(`an error occurred while fetching ${name} image`)
+  } finally {
+    stopTyping()
+  }
 }
 
 client.once(Events.ClientReady, (c) => {
@@ -130,6 +170,24 @@ client.on(Events.MessageCreate, async (message) => {
       } finally {
         stopTyping()
       }
+      return
+    }
+
+    // Handle "@bot rcat" command
+    if (cleaned.toLowerCase() === 'rcat') {
+      await handleRandomImageCommand(message, getRandomCat, 'cat')
+      return
+    }
+
+    // Handle "@bot rdog" command
+    if (cleaned.toLowerCase() === 'rdog') {
+      await handleRandomImageCommand(message, getRandomDog, 'dog')
+      return
+    }
+
+    // Handle "@bot rnsfw" command
+    if (cleaned.toLowerCase() === 'rnsfw') {
+      await handleRandomImageCommand(message, getRandomNSFW, 'nsfw')
       return
     }
 
