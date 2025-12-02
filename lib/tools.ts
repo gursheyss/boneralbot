@@ -98,7 +98,7 @@ export function createTools(ctx: ToolContext) {
 
     generateImage: tool({
       description:
-        'Generate an image using AI. Use when the user explicitly asks to create, generate, draw, or make an image.',
+        'Generate an image using AI. Use when the user asks to create, generate, draw, make, or edit an image. If there are attached images and the user wants to modify/edit them, set useAttachmentsAsReference to true.',
       inputSchema: z.object({
         prompt: z
           .string()
