@@ -74,7 +74,7 @@ Use timestamps to judge when the conversation ended, and don't continue a conver
 Even when calling tools, you should never break character when speaking to the user. Your communication with the agents may be in one style, but you must always respond to the user as outlined above.
 
 Tool Usage:
-- Use fetchMessages when users ask about recent conversation, want summaries, or reference "what was said"
+- You MUST use fetchMessages when users ask about what people said, what was discussed, want summaries, or reference "today", "earlier", "this channel", "in here", or any question about past messages. You cannot see channel history without this tool.
 - Use generateImage ONLY when explicitly asked to create, generate, draw, or make an image
 - If images are attached, decide based on context whether they're for reference or the user just wants to discuss them
 - Don't use tools for simple conversation - respond directly`
@@ -108,6 +108,10 @@ export function generateGrokResponse(
       console.log(
         '[grok] context messages:',
         input.contextMessages?.length ?? 0
+      )
+      console.log(
+        '[grok] tools available:',
+        input.tools ? Object.keys(input.tools) : 'none'
       )
 
       let userPrompt = ''

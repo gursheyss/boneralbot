@@ -30,7 +30,7 @@ export function createTools(ctx: ToolContext) {
   return {
     fetchMessages: tool({
       description:
-        'Fetch recent messages from the current Discord channel. Use this when the user asks about recent conversation, wants a summary, or needs context about what was discussed.',
+        'Fetch recent messages from the current Discord channel. You MUST use this tool when the user asks about what people said, what was discussed, wants a summary, or references "today", "earlier", "this channel", "in here", or any question about past conversation.',
       inputSchema: z.object({
         minutes: z
           .number()
