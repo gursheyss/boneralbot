@@ -66,9 +66,10 @@ async function getLeaderboard(): Promise<LeaderboardEntry[]> {
   for (let i = 0; i + 1 < flatResults.length; i += 2) {
     const userId = flatResults[i]
     const countStr = flatResults[i + 1]
+    if (!userId || !countStr) continue
     const count = parseInt(countStr, 10)
 
-    if (userId && Number.isFinite(count)) {
+    if (Number.isFinite(count)) {
       leaderboard.push({
         userId,
         count

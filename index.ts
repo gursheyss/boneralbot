@@ -11,17 +11,11 @@ import {
   Message
 } from 'discord.js'
 import { startTyping } from './lib/typing.ts'
-import { generateImage } from './lib/image.ts'
 import { getRandomCat, getRandomDog, getRandomNSFW } from './lib/random.ts'
-import { swapFaceOntoTarget, swapFaceInVideo } from './lib/faceswap.ts'
 import { generateGrokResponse } from './lib/grok.ts'
-import {
-  fetchConversationContext,
-  fetchThreadChain,
-  fetchMessagesFromLastHour,
-  truncateMessagesForContext,
-  type FormattedMessage
-} from './lib/context.ts'
+import { fetchThreadChain, type FormattedMessage } from './lib/context.ts'
+import { createTools, type ToolContext } from './lib/tools.ts'
+import { type Result } from 'neverthrow'
 
 const client = new Client({
   intents: [
@@ -31,31 +25,18 @@ const client = new Client({
   ]
 })
 
-const generationContext = new Map<
-  string,
-  { prompt: string; imageUrls: string[]; userId: string; username?: string }
->()
-
-const grokGenerationContext = new Map<
-  string,
-  {
-    prompt: string
-    contextMessages: FormattedMessage[]
-    isThread: boolean
-  }
->()
-
-function buildRetryRow() {
-  const retry = new ButtonBuilder()
-    .setCustomId('retry_gen')
-    .setLabel('Retry')
-    .setStyle(ButtonStyle.Primary)
-
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(retry)
-  return row
+// Store context for retry functionality
+interface GrokContext {
+  prompt: string
+  attachmentUrls: string[]
+  contextMessages: FormattedMessage[]
+  userId: string
+  username: string
 }
 
-function buildGrokRetryRow() {
+const grokContext = new Map<string, GrokContext>()
+
+function buildRetryRow() {
   const retry = new ButtonBuilder()
     .setCustomId('retry_grok')
     .setLabel('Retry')
@@ -64,8 +45,6 @@ function buildGrokRetryRow() {
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(retry)
   return row
 }
-
-import { type Result } from 'neverthrow'
 
 async function handleRandomImageCommand(
   message: Message,
@@ -109,670 +88,256 @@ client.once(Events.ClientReady, (c) => {
 
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return
+  if (!client.user) return
 
-  // Handle "@bot image <prompt>" command - generate image from text prompt only
-  if (client.user && message.mentions.has(client.user)) {
-    const botId = client.user.id
-    const cleaned = message.content
-      .replace(new RegExp(`<@!?${botId}>`, 'g'), '')
-      .trim()
+  // Only respond to @mentions
+  if (!message.mentions.has(client.user)) return
 
-    if (cleaned.toLowerCase().startsWith('image ')) {
-      const prompt = cleaned.slice(6).trim()
+  const botId = client.user.id
+  const prompt = message.content
+    .replace(new RegExp(`<@!?${botId}>`, 'g'), '')
+    .trim()
 
-      if (!prompt) {
-        await message.reply('please include a prompt after "image"')
-        return
-      }
-
-      const stopTyping = startTyping(message.channel)
-      try {
-        const result = await generateImage(
-          prompt,
-          [],
-          message.author.id,
-          message.author.username
-        )
-        stopTyping()
-
-        if (result.isOk()) {
-          if (result.value.nanoBanana.isOk()) {
-            const sent = await message.reply({
-              files: [
-                new AttachmentBuilder(result.value.nanoBanana.value, {
-                  name: 'generated.jpg'
-                })
-              ],
-              components: [buildRetryRow()]
-            })
-            generationContext.set(sent.id, {
-              prompt,
-              imageUrls: [],
-              userId: message.author.id,
-              username: message.author.username
-            })
-          } else {
-            console.error(
-              'Generation failed:',
-              result.value.nanoBanana.error
-            )
-            await message.reply(
-              `failed to generate: ${result.value.nanoBanana.error.message}`
-            )
-          }
-        } else {
-          console.error('failed to generate image', result.error)
-          await message.reply(`failed to generate: ${result.error}`)
-        }
-      } catch (e) {
-        console.error('failed to generate image', e)
-        await message.reply('failed to generate image')
-      } finally {
-        stopTyping()
-      }
-      return
-    }
-
-    // Handle "@bot rcat" command
-    if (cleaned.toLowerCase() === 'rcat') {
-      await handleRandomImageCommand(message, getRandomCat, 'cat')
-      return
-    }
-
-    // Handle "@bot rdog" command
-    if (cleaned.toLowerCase() === 'rdog') {
-      await handleRandomImageCommand(message, getRandomDog, 'dog')
-      return
-    }
-
-    // Handle "@bot rnsfw" command
-    if (cleaned.toLowerCase() === 'rnsfw') {
-      await handleRandomImageCommand(message, getRandomNSFW, 'nsfw')
-      return
-    }
-
-    // Handle "@bot summarize <query>" command
-    if (cleaned.toLowerCase().startsWith('summarize ')) {
-      const query = cleaned.slice(10).trim()
-
-      if (!query) {
-        await message.reply(
-          'please include what you want me to summarize (e.g., "summarize what johny and sekko are talking about")'
-        )
-        return
-      }
-
-      const stopTyping = startTyping(message.channel)
-      try {
-        const hourMessages = await fetchMessagesFromLastHour(message, {
-          excludeBots: true,
-          maxMessages: 500
-        })
-
-        if (hourMessages.length === 0) {
-          stopTyping()
-          await message.reply('no messages found in the last hour to summarize')
-          return
-        }
-
-        const contextMessages = truncateMessagesForContext(hourMessages)
-
-        const summarizeSystemPrompt = `You are summarizing a Discord channel conversation. Focus on:
-1. Answering the user's specific question about the conversation
-2. Being concise but comprehensive
-3. Mentioning relevant usernames when they contribute to the topic
-4. Noting the approximate timeframe of the discussion if relevant
-
-The user wants to know: ${query}`
-
-        const result = await generateGrokResponse({
-          prompt: `Based on the conversation context provided, ${query}`,
-          contextMessages,
-          systemPrompt: summarizeSystemPrompt
-        })
-
-        stopTyping()
-
-        if (result.isOk()) {
-          let response = result.value.text
-          if (response.length > 2000) {
-            response = response.substring(0, 1997) + '...'
-          }
-          await message.reply(response)
-        } else {
-          console.error('Summarize failed:', result.error)
-          await message.reply(`failed to summarize: ${result.error.message}`)
-        }
-      } catch (e) {
-        console.error('Summarize error:', e)
-        await message.reply('an error occurred while summarizing')
-      } finally {
-        stopTyping()
-      }
-      return
-    }
-  }
-
-  if (message.content.toLowerCase().includes('faceswap')) {
-    const imageAttachments = message.attachments.filter((attachment) =>
-      attachment.contentType?.startsWith('image/')
-    )
-
-    if (imageAttachments.size < 2) {
-      await message.reply('please attach two images to use faceswap.')
-      return
-    }
-
-    const [firstImage, secondImage] = Array.from(imageAttachments.values())
-    if (!firstImage || !secondImage) {
-      await message.reply('could not read both images, please try again.')
-      return
-    }
-
-    const stopTyping = startTyping(message.channel)
-    try {
-      const result = await swapFaceOntoTarget(firstImage.url, secondImage.url)
-      // Stop typing before sending the reply
-      stopTyping()
-
-      if (result.isOk()) {
-        await message.reply({
-          files: [
-            new AttachmentBuilder(result.value, {
-              name: 'swap.jpg'
-            })
-          ]
-        })
-      } else {
-        console.error('face swap failed:', result.error)
-        await message.reply(`failed to swap faces: ${result.error.message}`)
-      }
-    } catch (e) {
-      console.error('faceswap error:', e)
-      await message.reply('an error occurred while swapping faces.')
-    } finally {
-      // Ensure typing always stops even if an error occurs above
-      stopTyping()
-    }
+  // Handle "@bot rcat" command
+  if (prompt.toLowerCase() === 'rcat') {
+    await handleRandomImageCommand(message, getRandomCat, 'cat')
     return
   }
 
-  if (
-    client.user &&
-    message.mentions.has(client.user) &&
-    message.attachments.size > 0
-  ) {
-    const imageAttachments = message.attachments.filter((attachment) =>
-      attachment.contentType?.startsWith('image/')
-    )
-    const videoAttachments = message.attachments.filter((attachment) =>
-      attachment.contentType?.startsWith('video/')
-    )
-
-    if (imageAttachments.size > 0 && videoAttachments.size > 0) {
-      const swapImage = imageAttachments.first()
-      const targetVideo = videoAttachments.first()
-
-      if (!swapImage || !targetVideo) {
-        await message.reply(
-          'could not read the provided media, please try again.'
-        )
-        return
-      }
-
-      const stopTyping = startTyping(message.channel)
-      try {
-        const result = await swapFaceInVideo(swapImage.url, targetVideo.url)
-        stopTyping()
-
-        if (result.isOk()) {
-          await message.reply({
-            files: [
-              new AttachmentBuilder(result.value, {
-                name: 'faceswap-video.mp4'
-              })
-            ]
-          })
-        } else {
-          console.error('video face swap failed:', result.error)
-          await message.reply(
-            `failed to swap video faces: ${result.error.message}`
-          )
-        }
-      } catch (e) {
-        console.error('video faceswap error:', e)
-        await message.reply(
-          'an error occurred while swapping faces in the video.'
-        )
-      } finally {
-        stopTyping()
-      }
-      return
-    }
+  // Handle "@bot rdog" command
+  if (prompt.toLowerCase() === 'rdog') {
+    await handleRandomImageCommand(message, getRandomDog, 'dog')
+    return
   }
 
+  // Handle "@bot rnsfw" command
+  if (prompt.toLowerCase() === 'rnsfw') {
+    await handleRandomImageCommand(message, getRandomNSFW, 'nsfw')
+    return
+  }
+
+  if (!prompt) {
+    await message.reply('please include a message or question when you mention me')
+    return
+  }
+
+  // Collect image attachments from current message
+  const imageAttachments = message.attachments.filter((attachment) =>
+    attachment.contentType?.startsWith('image/')
+  )
+  let attachmentUrls = imageAttachments.map((a) => a.url)
+
+  // Also check referenced message for images
   if (message.reference) {
     try {
       const referencedMessage = await message.fetchReference()
-
-      const referencedImageAttachments = referencedMessage.attachments.filter(
+      const refImageAttachments = referencedMessage.attachments.filter(
         (attachment) => attachment.contentType?.startsWith('image/')
       )
-
-      if (referencedImageAttachments.size > 0) {
-        let prompt: string | null = null
-
-        if (
-          referencedMessage.author.id === client.user?.id &&
-          message.content.trim()
-        ) {
-          prompt = message.content.trim()
-        } else if (client.user && message.mentions.has(client.user)) {
-          const botId = client.user.id
-          const cleaned = message.content
-            .replace(new RegExp(`^<@!?${botId}>\\s*`), '')
-            .replace(new RegExp(`\\s*<@!?${botId}>$`), '')
-            .trim()
-          if (cleaned) {
-            prompt = cleaned
-          }
-        }
-
-        if (prompt) {
-          // Collect images from referenced message
-          const referencedImageUrls = referencedImageAttachments.map(
-            (attachment) => attachment.url
-          )
-
-          // Also collect any images from the current reply message
-          const replyImageAttachments = message.attachments.filter(
-            (attachment) => attachment.contentType?.startsWith('image/')
-          )
-          const replyImageUrls = replyImageAttachments.map(
-            (attachment) => attachment.url
-          )
-
-          // Combine all image URLs
-          const imageUrls = [...referencedImageUrls, ...replyImageUrls]
-
-          const stopTyping = startTyping(message.channel)
-          try {
-            const result = await generateImage(
-              prompt,
-              imageUrls,
-              message.author.id,
-              message.author.username
-            )
-            // Stop typing before sending the reply
-            stopTyping()
-
-            if (result.isOk()) {
-              if (result.value.nanoBanana.isOk()) {
-                const sent = await message.reply({
-                  files: [
-                    new AttachmentBuilder(result.value.nanoBanana.value, {
-                      name: 'generated.jpg'
-                    })
-                  ],
-                  components: [buildRetryRow()]
-                })
-                generationContext.set(sent.id, {
-                  prompt,
-                  imageUrls,
-                  userId: message.author.id,
-                  username: message.author.username
-                })
-              } else {
-                console.error(
-                  'Generation failed:',
-                  result.value.nanoBanana.error
-                )
-                await message.reply(
-                  `failed to generate: ${result.value.nanoBanana.error.message}`
-                )
-              }
-            } else {
-              console.error('failed to generate image', result.error)
-              await message.reply(`failed to generate: ${result.error}`)
-            }
-          } catch (e) {
-            console.error('failed to generate image', e)
-            await message.reply('failed to generate image')
-          } finally {
-            // Ensure typing always stops even if an error occurs above
-            stopTyping()
-          }
-          return
-        }
-      }
+      const refImageUrls = refImageAttachments.map((a) => a.url)
+      attachmentUrls = [...refImageUrls, ...attachmentUrls]
     } catch {
-      // ignore errors when fetching reference
+      // Ignore errors fetching reference
     }
   }
 
-  // biome-ignore lint/style/noNonNullAssertion: lameeee
-  if (message.mentions.has(client.user!) && message.attachments.size > 0) {
-    const imageAttachments = message.attachments.filter((attachment) =>
-      attachment.contentType?.startsWith('image/')
-    )
+  // Fetch thread context if this is a reply
+  let contextMessages: FormattedMessage[] = []
+  if (message.reference) {
+    contextMessages = await fetchThreadChain(message)
+  }
 
-    if (imageAttachments.size === 0) {
-      await message.reply('attach at least one image')
+  const stopTyping = startTyping(message.channel)
+  try {
+    // Create tools with Discord context
+    const toolContext: ToolContext = {
+      discordMessage: message,
+      attachmentUrls,
+      userId: message.author.id,
+      username: message.author.username
+    }
+    const tools = createTools(toolContext)
+
+    const result = await generateGrokResponse({
+      prompt,
+      contextMessages,
+      attachmentUrls,
+      tools
+    })
+
+    stopTyping()
+
+    if (result.isErr()) {
+      console.error('Grok generation failed:', result.error)
+      await message.reply(`failed to generate response: ${result.error.message}`)
       return
     }
 
-    const botId = client.user!.id
-    const prompt = message.content
-      .replace(new RegExp(`^<@!?${botId}>\\s*`), '')
-      .replace(new RegExp(`\\s*<@!?${botId}>$`), '')
-      .trim()
+    const { text, reasoning, imageBuffer } = result.value
 
-    if (!prompt) {
-      await message.reply('include a prompt')
-      return
-    }
+    // Send image if one was generated
+    if (imageBuffer) {
+      const sent = await message.reply({
+        content: text || undefined,
+        files: [
+          new AttachmentBuilder(imageBuffer, {
+            name: 'generated.jpg'
+          })
+        ],
+        components: [buildRetryRow()]
+      })
 
-    const stopTyping = startTyping(message.channel)
-    try {
-      const imageUrls = imageAttachments.map((attachment) => attachment.url)
-      const result = await generateImage(
+      // Store context for retry
+      grokContext.set(sent.id, {
         prompt,
-        imageUrls,
-        message.author.id,
-        message.author.username
-      )
-      // Stop typing before sending the reply
-      stopTyping()
-
-      if (result.isOk()) {
-        if (result.value.nanoBanana.isOk()) {
-          const sent = await message.reply({
-            files: [
-              new AttachmentBuilder(result.value.nanoBanana.value, {
-                name: 'generated.jpg'
-              })
-            ],
-            components: [buildRetryRow()]
-          })
-          generationContext.set(sent.id, {
-            prompt,
-            imageUrls,
-            userId: message.author.id,
-            username: message.author.username
-          })
-        } else {
-          console.error(
-            'Generation failed:',
-            result.value.nanoBanana.error
-          )
-          await message.reply(
-            `failed to generate: ${result.value.nanoBanana.error.message}`
-          )
-        }
-      } else {
-        console.error('failed to generate image', result.error)
-        await message.reply(`failed to generate: ${result.error}`)
-      }
-    } catch (e) {
-      console.error('failed to generate image', e)
-      await message.reply('failed to generate image')
-    } finally {
-      // Ensure typing always stops even if an error occurs above
-      stopTyping()
-    }
-    return
-  }
-
-  // Handle @mentions without images - use Grok
-  // biome-ignore lint/style/noNonNullAssertion: lameeee
-  if (message.mentions.has(client.user!)) {
-    const imageAttachments = message.attachments.filter((attachment) =>
-      attachment.contentType?.startsWith('image/')
-    )
-
-    // Only proceed if there are NO images (image generation is handled above)
-    if (imageAttachments.size === 0) {
-      const botId = client.user!.id
-      const prompt = message.content
-        .replace(new RegExp(`^<@!?${botId}>\\s*`), '')
-        .replace(new RegExp(`\\s*<@!?${botId}>$`), '')
-        .trim()
-
-      if (!prompt) {
-        await message.reply(
-          'please include a message or question when you mention me'
-        )
-        return
-      }
-
-      const stopTyping = startTyping(message.channel)
-      try {
-        let contextMessages: FormattedMessage[] = []
-        let isThread = false
-
-        // Only fetch context if this is a reply/thread
-        if (message.reference) {
-          isThread = true
-          contextMessages = await fetchThreadChain(message)
-        }
-
-        const result = await generateGrokResponse({
-          prompt,
-          contextMessages
-        })
-
-        // Stop typing before sending the reply
-        stopTyping()
-
-        if (result.isOk()) {
-          let response = result.value.text
-          const reasoning = result.value.reasoning
-
-          // Build message with reasoning as subtext if available
-          let fullMessage = response
-          if (reasoning) {
-            // Use -# for subtext (small text) in Discord
-            const subtextReasoning = reasoning
-              .split('\n')
-              .map((line) => `-# ${line}`)
-              .join('\n')
-            fullMessage = `${response}\n\n${subtextReasoning}`
-          }
-
-          // Discord message limit is 2000 characters
-          if (fullMessage.length > 2000) {
-            fullMessage = fullMessage.substring(0, 1997) + '...'
-          }
-
-          const sent = await message.reply({
-            content: fullMessage,
-            components: [buildGrokRetryRow()]
-          })
-
-          // Store context for retry
-          grokGenerationContext.set(sent.id, {
-            prompt,
-            contextMessages,
-            isThread
-          })
-        } else {
-          console.error('Grok generation failed:', result.error)
-          await message.reply(
-            `failed to generate response: ${result.error.message}`
-          )
-        }
-      } catch (e) {
-        console.error('Grok generation error:', e)
-        await message.reply('An error occurred while generating a response')
-      } finally {
-        // Ensure typing always stops even if an error occurs above
-        stopTyping()
-      }
+        attachmentUrls,
+        contextMessages,
+        userId: message.author.id,
+        username: message.author.username
+      })
       return
     }
+
+    // Text-only response
+    let fullMessage = text
+    if (reasoning) {
+      const subtextReasoning = reasoning
+        .split('\n')
+        .map((line) => `-# ${line}`)
+        .join('\n')
+      fullMessage = `${text}\n\n${subtextReasoning}`
+    }
+
+    // Discord message limit is 2000 characters
+    if (fullMessage.length > 2000) {
+      fullMessage = fullMessage.substring(0, 1997) + '...'
+    }
+
+    const sent = await message.reply({
+      content: fullMessage,
+      components: [buildRetryRow()]
+    })
+
+    // Store context for retry
+    grokContext.set(sent.id, {
+      prompt,
+      attachmentUrls,
+      contextMessages,
+      userId: message.author.id,
+      username: message.author.username
+    })
+  } catch (e) {
+    console.error('Grok generation error:', e)
+    await message.reply('An error occurred while generating a response')
+  } finally {
+    stopTyping()
   }
 })
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isButton()) return
+  if (interaction.customId !== 'retry_grok') return
 
-  // Handle image generation retry
-  if (interaction.customId === 'retry_gen') {
-    const ctx = generationContext.get(interaction.message.id)
-    if (!ctx) {
-      await interaction.reply({
-        content:
-          'context expired. reply to the original image with your prompt to regenerate.',
-        ephemeral: true
-      })
-      return
-    }
-
-    if (!interaction.channel) {
-      await interaction.reply({ content: 'cannot retry here', ephemeral: true })
-      return
-    }
-
-    const channel = interaction.channel
-    if (!('sendTyping' in channel) || !('send' in channel)) {
-      await interaction.reply({ content: 'cannot retry here', ephemeral: true })
-      return
-    }
-
-    const stopTyping = startTyping(channel)
-    try {
-      await interaction.deferReply({ ephemeral: true })
-      const result = await generateImage(
-        ctx.prompt,
-        ctx.imageUrls,
-        ctx.userId,
-        ctx.username
-      )
-      if (result.isOk()) {
-        if (result.value.nanoBanana.isOk()) {
-          const sent = await channel.send({
-            files: [
-              new AttachmentBuilder(result.value.nanoBanana.value, {
-                name: 'generated.jpg'
-              })
-            ],
-            components: [buildRetryRow()]
-          })
-          generationContext.set(sent.id, ctx)
-          await interaction.editReply('Retry complete')
-        } else {
-          console.error(
-            'Generation failed:',
-            result.value.nanoBanana.error
-          )
-          await interaction.editReply(
-            `retry failed: ${result.value.nanoBanana.error.message}`
-          )
-        }
-      } else {
-        console.error('failed to generate image', result.error)
-        await interaction.editReply(`failed to generate: ${result.error}`)
-      }
-    } catch (e) {
-      console.error('failed to generate image', e)
-      try {
-        if (interaction.deferred || interaction.replied) {
-          await interaction.editReply('failed to generate image')
-        } else {
-          await interaction.reply({
-            content: 'failed to generate image',
-            ephemeral: true
-          })
-        }
-      } catch {}
-    } finally {
-      stopTyping()
-    }
+  const ctx = grokContext.get(interaction.message.id)
+  if (!ctx) {
+    await interaction.reply({
+      content: 'context expired. please mention me again with your question.',
+      ephemeral: true
+    })
     return
   }
 
-  // Handle Grok retry
-  if (interaction.customId === 'retry_grok') {
-    const ctx = grokGenerationContext.get(interaction.message.id)
-    if (!ctx) {
-      await interaction.reply({
-        content: 'context expired. please mention me again with your question.',
-        ephemeral: true
-      })
-      return
-    }
-
-    if (!interaction.channel) {
-      await interaction.reply({ content: 'cannot retry here', ephemeral: true })
-      return
-    }
-
-    const channel = interaction.channel
-    if (!('sendTyping' in channel) || !('send' in channel)) {
-      await interaction.reply({ content: 'cannot retry here', ephemeral: true })
-      return
-    }
-
-    const stopTyping = startTyping(channel)
-    try {
-      await interaction.deferReply({ ephemeral: true })
-
-      const result = await generateGrokResponse({
-        prompt: ctx.prompt,
-        contextMessages: ctx.contextMessages
-      })
-
-      if (result.isOk()) {
-        const response = result.value.text
-        const reasoning = result.value.reasoning
-
-        // Build message with reasoning as subtext if available
-        let fullMessage = response
-        if (reasoning) {
-          // Use -# for subtext (small text) in Discord
-          const subtextReasoning = reasoning
-            .split('\n')
-            .map((line) => `-# ${line}`)
-            .join('\n')
-          fullMessage = `${response}\n\n${subtextReasoning}`
-        }
-
-        // Discord message limit is 2000 characters
-        if (fullMessage.length > 2000) {
-          fullMessage = fullMessage.substring(0, 1997) + '...'
-        }
-
-        const sent = await channel.send({
-          content: fullMessage,
-          components: [buildGrokRetryRow()]
-        })
-
-        // Store context for future retries
-        grokGenerationContext.set(sent.id, ctx)
-
-        await interaction.editReply('Retry complete')
-      } else {
-        console.error('Grok retry failed:', result.error)
-        await interaction.editReply(
-          `failed to generate response: ${result.error.message}`
-        )
-      }
-    } catch (e) {
-      console.error('Grok retry error:', e)
-      try {
-        if (interaction.deferred || interaction.replied) {
-          await interaction.editReply('failed to generate response')
-        } else {
-          await interaction.reply({
-            content: 'failed to generate response',
-            ephemeral: true
-          })
-        }
-      } catch {}
-    } finally {
-      stopTyping()
-    }
+  if (!interaction.channel) {
+    await interaction.reply({ content: 'cannot retry here', ephemeral: true })
     return
+  }
+
+  const channel = interaction.channel
+  if (!('sendTyping' in channel) || !('send' in channel)) {
+    await interaction.reply({ content: 'cannot retry here', ephemeral: true })
+    return
+  }
+
+  const stopTyping = startTyping(channel)
+  try {
+    await interaction.deferReply({ ephemeral: true })
+
+    // Create a minimal tool context for retry (no Discord message available)
+    const toolContext: ToolContext = {
+      // @ts-expect-error - we don't have the original message for retry
+      discordMessage: null,
+      attachmentUrls: ctx.attachmentUrls,
+      userId: ctx.userId,
+      username: ctx.username
+    }
+    const tools = createTools(toolContext)
+
+    const result = await generateGrokResponse({
+      prompt: ctx.prompt,
+      contextMessages: ctx.contextMessages,
+      attachmentUrls: ctx.attachmentUrls,
+      tools
+    })
+
+    if (result.isErr()) {
+      console.error('Retry failed:', result.error)
+      await interaction.editReply(`retry failed: ${result.error.message}`)
+      return
+    }
+
+    const { text, reasoning, imageBuffer } = result.value
+
+    // Send image if one was generated
+    if (imageBuffer) {
+      const sent = await channel.send({
+        content: text || undefined,
+        files: [
+          new AttachmentBuilder(imageBuffer, {
+            name: 'generated.jpg'
+          })
+        ],
+        components: [buildRetryRow()]
+      })
+      grokContext.set(sent.id, ctx)
+      await interaction.editReply('Retry complete')
+      return
+    }
+
+    // Text-only response
+    let fullMessage = text
+    if (reasoning) {
+      const subtextReasoning = reasoning
+        .split('\n')
+        .map((line) => `-# ${line}`)
+        .join('\n')
+      fullMessage = `${text}\n\n${subtextReasoning}`
+    }
+
+    if (fullMessage.length > 2000) {
+      fullMessage = fullMessage.substring(0, 1997) + '...'
+    }
+
+    const sent = await channel.send({
+      content: fullMessage,
+      components: [buildRetryRow()]
+    })
+
+    grokContext.set(sent.id, ctx)
+    await interaction.editReply('Retry complete')
+  } catch (e) {
+    console.error('Retry error:', e)
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply('failed to generate response')
+      } else {
+        await interaction.reply({
+          content: 'failed to generate response',
+          ephemeral: true
+        })
+      }
+    } catch {}
+  } finally {
+    stopTyping()
   }
 })
 

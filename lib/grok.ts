@@ -1,7 +1,8 @@
 import { xai } from '@ai-sdk/xai'
-import { generateText } from 'ai'
+import { generateText, stepCountIs, type Tool } from 'ai'
 import { ResultAsync } from 'neverthrow'
 import { type FormattedMessage, formatMessagesForGrok } from './context.ts'
+import { type ImageToolResult } from './tools.ts'
 
 const GROK_SYSTEM_PROMPT = `Personality
 
@@ -70,17 +71,26 @@ At the end of a conversation, you can react or output an empty string to say not
 
 Use timestamps to judge when the conversation ended, and don't continue a conversation from long ago.
 
-Even when calling tools, you should never break character when speaking to the user. Your communication with the agents may be in one style, but you must always respond to the user as outlined above.`
+Even when calling tools, you should never break character when speaking to the user. Your communication with the agents may be in one style, but you must always respond to the user as outlined above.
+
+Tool Usage:
+- Use fetchMessages when users ask about recent conversation, want summaries, or reference "what was said"
+- Use generateImage ONLY when explicitly asked to create, generate, draw, or make an image
+- If images are attached, decide based on context whether they're for reference or the user just wants to discuss them
+- Don't use tools for simple conversation - respond directly`
 
 export interface GrokInput {
   prompt: string
   contextMessages?: FormattedMessage[]
   systemPrompt?: string
+  attachmentUrls?: string[]
+  tools?: Record<string, Tool>
 }
 
 export interface GrokResponse {
   text: string
   reasoning?: string
+  imageBuffer?: Buffer
 }
 
 /**
@@ -111,6 +121,12 @@ export function generateGrokResponse(
         console.log('[grok] using prompt without context')
       }
 
+      // Add attachment info to prompt if present
+      if (input.attachmentUrls && input.attachmentUrls.length > 0) {
+        userPrompt += `\n\n[User attached ${input.attachmentUrls.length} image(s) to this message]`
+        console.log('[grok] added attachment info to prompt')
+      }
+
       const maxRetries = 3
       let lastError: Error | null = null
 
@@ -121,6 +137,8 @@ export function generateGrokResponse(
             model: xai('grok-4-1-fast-reasoning'),
             system: input.systemPrompt || GROK_SYSTEM_PROMPT,
             prompt: userPrompt,
+            tools: input.tools,
+            stopWhen: input.tools ? stepCountIs(3) : stepCountIs(1),
             providerOptions: {
               xai: {
                 searchParameters: {
@@ -150,19 +168,42 @@ export function generateGrokResponse(
             result.reasoningText?.length ?? 0
           )
           console.log('[grok] full result keys:', Object.keys(result))
+          console.log('[grok] tool calls:', result.toolCalls?.length ?? 0)
+          console.log('[grok] tool results:', result.toolResults?.length ?? 0)
 
-          if (!result.text || result.text.trim().length === 0) {
-            console.log('[grok] empty response, throwing error')
+          // Extract image buffer from tool results if present
+          let imageBuffer: Buffer | undefined
+          if (result.toolResults && result.toolResults.length > 0) {
+            for (const toolResult of result.toolResults) {
+              if (toolResult.toolName === 'generateImage') {
+                const imgResult = toolResult.output as ImageToolResult
+                if (imgResult.success && imgResult.imageBuffer) {
+                  imageBuffer = imgResult.imageBuffer
+                  console.log('[grok] extracted image buffer from tool result')
+                }
+              }
+            }
+          }
+
+          // Allow empty text if we generated an image
+          if (
+            (!result.text || result.text.trim().length === 0) &&
+            !imageBuffer
+          ) {
+            console.log('[grok] empty response and no image, throwing error')
             throw new Error('Grok returned empty response')
           }
 
-          const response = {
-            text: result.text.trim(),
-            reasoning: result.reasoningText?.trim()
+          const response: GrokResponse = {
+            text: result.text?.trim() || '',
+            reasoning: result.reasoningText?.trim(),
+            imageBuffer
           }
           console.log(
             '[grok] returning response with reasoning:',
-            !!response.reasoning
+            !!response.reasoning,
+            'image:',
+            !!response.imageBuffer
           )
           return response
         } catch (error) {

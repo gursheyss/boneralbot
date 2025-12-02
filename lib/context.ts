@@ -157,6 +157,7 @@ export function truncateMessagesForContext(
   // Iterate from newest to oldest (prioritize recent)
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
+    if (!msg) continue
     const msgLength = msg.author.length + msg.content.length + 50
     if (totalLength + msgLength > maxCharacters) break
     truncated.unshift(msg)
