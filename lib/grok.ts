@@ -75,6 +75,7 @@ Even when calling tools, you should never break character when speaking to the u
 export interface GrokInput {
   prompt: string
   contextMessages?: FormattedMessage[]
+  systemPrompt?: string
 }
 
 export interface GrokResponse {
@@ -118,7 +119,7 @@ export function generateGrokResponse(
         try {
           const result = await generateText({
             model: xai('grok-4-1-fast-reasoning'),
-            system: GROK_SYSTEM_PROMPT,
+            system: input.systemPrompt || GROK_SYSTEM_PROMPT,
             prompt: userPrompt,
             providerOptions: {
               xai: {

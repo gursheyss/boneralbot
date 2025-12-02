@@ -89,3 +89,79 @@ export function formatMessagesForGrok(messages: FormattedMessage[]): string {
     })
     .join('\n')
 }
+
+export interface FetchMessagesOptions {
+  excludeBots?: boolean
+  maxMessages?: number
+}
+
+/**
+ * Fetches all messages from the last hour in the channel.
+ * Paginates through Discord API (100 messages per fetch) until hitting the 1-hour boundary.
+ */
+export async function fetchMessagesFromLastHour(
+  message: Message,
+  options: FetchMessagesOptions = {}
+): Promise<FormattedMessage[]> {
+  const { excludeBots = true, maxMessages = 500 } = options
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
+  const allMessages: Message[] = []
+  let lastMessageId: string | undefined = message.id
+
+  try {
+    while (allMessages.length < maxMessages) {
+      const fetchOptions: { limit: number; before?: string } = { limit: 100 }
+      if (lastMessageId) {
+        fetchOptions.before = lastMessageId
+      }
+
+      const batch = await message.channel.messages.fetch(fetchOptions)
+      if (batch.size === 0) break
+
+      let hitTimeLimit = false
+      for (const msg of batch.values()) {
+        if (msg.createdAt < oneHourAgo) {
+          hitTimeLimit = true
+          break
+        }
+        if (excludeBots && msg.author.bot) continue
+        allMessages.push(msg)
+      }
+
+      if (hitTimeLimit) break
+
+      const oldestInBatch = batch.last()
+      if (!oldestInBatch || oldestInBatch.createdAt < oneHourAgo) break
+      lastMessageId = oldestInBatch.id
+    }
+
+    // Reverse to chronological order (oldest first)
+    return formatMessages(allMessages.reverse())
+  } catch (error) {
+    console.error('Error fetching messages from last hour:', error)
+    return []
+  }
+}
+
+/**
+ * Truncates messages to fit within a character limit for Grok context.
+ * Prioritizes recent messages (most relevant to current conversation).
+ */
+export function truncateMessagesForContext(
+  messages: FormattedMessage[],
+  maxCharacters: number = 15000
+): FormattedMessage[] {
+  let totalLength = 0
+  const truncated: FormattedMessage[] = []
+
+  // Iterate from newest to oldest (prioritize recent)
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    const msgLength = msg.author.length + msg.content.length + 50
+    if (totalLength + msgLength > maxCharacters) break
+    truncated.unshift(msg)
+    totalLength += msgLength
+  }
+
+  return truncated
+}

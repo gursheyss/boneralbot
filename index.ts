@@ -16,6 +16,8 @@ import { generateGrokResponse } from './lib/grok.ts'
 import {
   fetchConversationContext,
   fetchThreadChain,
+  fetchMessagesFromLastHour,
+  truncateMessagesForContext,
   type FormattedMessage
 } from './lib/context.ts'
 
@@ -125,6 +127,67 @@ client.on(Events.MessageCreate, async (message) => {
       } catch (e) {
         console.error('failed to generate image', e)
         await message.reply('failed to generate image')
+      } finally {
+        stopTyping()
+      }
+      return
+    }
+
+    // Handle "@bot summarize <query>" command
+    if (cleaned.toLowerCase().startsWith('summarize ')) {
+      const query = cleaned.slice(10).trim()
+
+      if (!query) {
+        await message.reply(
+          'please include what you want me to summarize (e.g., "summarize what johny and sekko are talking about")'
+        )
+        return
+      }
+
+      const stopTyping = startTyping(message.channel)
+      try {
+        const hourMessages = await fetchMessagesFromLastHour(message, {
+          excludeBots: true,
+          maxMessages: 500
+        })
+
+        if (hourMessages.length === 0) {
+          stopTyping()
+          await message.reply('no messages found in the last hour to summarize')
+          return
+        }
+
+        const contextMessages = truncateMessagesForContext(hourMessages)
+
+        const summarizeSystemPrompt = `You are summarizing a Discord channel conversation. Focus on:
+1. Answering the user's specific question about the conversation
+2. Being concise but comprehensive
+3. Mentioning relevant usernames when they contribute to the topic
+4. Noting the approximate timeframe of the discussion if relevant
+
+The user wants to know: ${query}`
+
+        const result = await generateGrokResponse({
+          prompt: `Based on the conversation context provided, ${query}`,
+          contextMessages,
+          systemPrompt: summarizeSystemPrompt
+        })
+
+        stopTyping()
+
+        if (result.isOk()) {
+          let response = result.value.text
+          if (response.length > 2000) {
+            response = response.substring(0, 1997) + '...'
+          }
+          await message.reply(response)
+        } else {
+          console.error('Summarize failed:', result.error)
+          await message.reply(`failed to summarize: ${result.error.message}`)
+        }
+      } catch (e) {
+        console.error('Summarize error:', e)
+        await message.reply('an error occurred while summarizing')
       } finally {
         stopTyping()
       }
