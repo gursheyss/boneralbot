@@ -11,7 +11,7 @@ import {
   Message
 } from 'discord.js'
 import { startTyping } from './lib/typing.ts'
-import { getRandomCat, getRandomDog, getRandomNSFW } from './lib/random.ts'
+import { getRandomCat, getRandomDog, getRandomNSFW, getRandomFromSubreddit } from './lib/random.ts'
 import { generateGrokResponse } from './lib/grok.ts'
 import { fetchThreadChain, type FormattedMessage } from './lib/context.ts'
 import { createTools, type ToolContext } from './lib/tools.ts'
@@ -114,6 +114,15 @@ client.on(Events.MessageCreate, async (message) => {
   // Handle "@bot rnsfw" command
   if (prompt.toLowerCase() === 'rnsfw') {
     await handleRandomImageCommand(message, getRandomNSFW, 'nsfw')
+    return
+  }
+
+  // Handle "@bot r<subreddit>" command
+  const subredditMatch = prompt.match(/^r([a-zA-Z0-9_]+)$/i)
+  if (subredditMatch) {
+    const subreddit = subredditMatch[1]
+    if (!subreddit) return
+    await handleRandomImageCommand(message, () => getRandomFromSubreddit(subreddit), subreddit)
     return
   }
 
