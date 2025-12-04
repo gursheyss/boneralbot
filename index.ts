@@ -15,6 +15,7 @@ import { getRandomCat, getRandomDog, getRandomNSFW } from './lib/random.ts'
 import { generateGrokResponse } from './lib/grok.ts'
 import { fetchThreadChain, type FormattedMessage } from './lib/context.ts'
 import { createTools, type ToolContext } from './lib/tools.ts'
+import { generateImage } from './lib/image.ts'
 import { type Result } from 'neverthrow'
 
 const client = new Client({
@@ -122,18 +123,24 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   // Collect image attachments from current message
-  const imageAttachments = message.attachments.filter((attachment) =>
-    attachment.contentType?.startsWith('image/')
-  )
+  // Check by contentType OR file extension for robustness
+  const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']
+  const imageAttachments = message.attachments.filter((attachment) => {
+    if (attachment.contentType?.startsWith('image/')) return true
+    const url = attachment.url?.toLowerCase().split('?')[0]
+    return url && imageExtensions.some(ext => url.endsWith(ext))
+  })
   let attachmentUrls = imageAttachments.map((a) => a.url)
 
   // Also check referenced message for images
   if (message.reference) {
     try {
       const referencedMessage = await message.fetchReference()
-      const refImageAttachments = referencedMessage.attachments.filter(
-        (attachment) => attachment.contentType?.startsWith('image/')
-      )
+      const refImageAttachments = referencedMessage.attachments.filter((attachment) => {
+        if (attachment.contentType?.startsWith('image/')) return true
+        const url = attachment.url?.toLowerCase().split('?')[0]
+        return url && imageExtensions.some(ext => url.endsWith(ext))
+      })
       const refImageUrls = refImageAttachments.map((a) => a.url)
       attachmentUrls = [...refImageUrls, ...attachmentUrls]
     } catch {
@@ -148,6 +155,61 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   const stopTyping = startTyping(message.channel)
+
+  console.log('[index] attachments detected:', attachmentUrls.length, attachmentUrls)
+
+  // If there are image attachments, directly generate/edit with nano banana pro
+  if (attachmentUrls.length > 0) {
+    try {
+      const result = await generateImage(
+        prompt,
+        attachmentUrls,
+        message.author.id,
+        message.author.username
+      )
+
+      stopTyping()
+
+      if (result.isErr()) {
+        console.error('Image generation failed:', result.error)
+        await message.reply(`failed to generate image: ${result.error.message}`)
+        return
+      }
+
+      const { nanoBanana } = result.value
+
+      if (nanoBanana.isErr()) {
+        console.error('Nano-banana failed:', nanoBanana.error)
+        await message.reply(`failed to generate image: ${nanoBanana.error.message}`)
+        return
+      }
+
+      const sent = await message.reply({
+        files: [
+          new AttachmentBuilder(nanoBanana.value, {
+            name: 'generated.jpg'
+          })
+        ],
+        components: [buildRetryRow()]
+      })
+
+      // Store context for retry
+      grokContext.set(sent.id, {
+        prompt,
+        attachmentUrls,
+        contextMessages,
+        userId: message.author.id,
+        username: message.author.username
+      })
+      return
+    } catch (e) {
+      console.error('Image generation error:', e)
+      await message.reply('An error occurred while generating the image')
+      stopTyping()
+      return
+    }
+  }
+
   try {
     // Create tools with Discord context
     const toolContext: ToolContext = {
@@ -261,6 +323,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const stopTyping = startTyping(channel)
   try {
     await interaction.deferReply({ ephemeral: true })
+
+    // If there are image attachments, directly regenerate with nano banana pro
+    if (ctx.attachmentUrls.length > 0) {
+      const result = await generateImage(
+        ctx.prompt,
+        ctx.attachmentUrls,
+        ctx.userId,
+        ctx.username
+      )
+
+      if (result.isErr()) {
+        console.error('Retry failed:', result.error)
+        await interaction.editReply(`retry failed: ${result.error.message}`)
+        return
+      }
+
+      const { nanoBanana } = result.value
+
+      if (nanoBanana.isErr()) {
+        console.error('Retry nano-banana failed:', nanoBanana.error)
+        await interaction.editReply(`retry failed: ${nanoBanana.error.message}`)
+        return
+      }
+
+      const sent = await channel.send({
+        files: [
+          new AttachmentBuilder(nanoBanana.value, {
+            name: 'generated.jpg'
+          })
+        ],
+        components: [buildRetryRow()]
+      })
+      grokContext.set(sent.id, ctx)
+      await interaction.editReply('Retry complete')
+      return
+    }
 
     // Create a minimal tool context for retry (no Discord message available)
     const toolContext: ToolContext = {
