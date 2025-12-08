@@ -1,4 +1,4 @@
-import { Collection, type Message } from 'discord.js'
+import { Client, Collection, type Message } from 'discord.js'
 import { formatDistanceToNow } from 'date-fns'
 
 export interface FormattedMessage {
@@ -59,6 +59,65 @@ export async function fetchThreadChain(
     return formatMessages(threadMessages)
   } catch (error) {
     console.error('Error fetching thread chain:', error)
+    return []
+  }
+}
+
+/**
+ * Fetches the last N messages from a specific user in the general channel.
+ */
+export async function fetchUserMessages(
+  client: Client,
+  userId: string,
+  limit = 100
+): Promise<FormattedMessage[]> {
+  try {
+    const channel = await client.channels.fetch('1276716984192598112')
+    if (!channel || !channel.isTextBased()) {
+      console.warn('General chat channel not found or not text-based')
+      return []
+    }
+
+    const collectedMessages: Message[] = []
+    let lastId: string | undefined
+
+    const MAX_SCAN = 3000
+    let scanned = 0
+
+    while (collectedMessages.length < limit && scanned < MAX_SCAN) {
+      const options: any = { limit: 100 }
+      if (lastId) options.before = lastId
+
+      const messages = (await channel.messages.fetch(
+        options
+      )) as unknown as Collection<string, Message>
+      if (messages.size === 0) break
+
+      const userMessages = messages.filter((m) => {
+        // Basic checks
+        if (m.author.id !== userId) return false
+        if (m.content.trim().length === 0) return false
+
+        // Filter out bot mentions
+        if (client.user && m.mentions.has(client.user.id)) return false
+
+        // Filter out messages that are only links
+        const contentWithoutLinks = m.content
+          .replace(/https?:\/\/[^\s]+/g, '')
+          .trim()
+        if (contentWithoutLinks.length === 0) return false
+
+        return true
+      })
+      collectedMessages.push(...userMessages.values())
+
+      lastId = messages.last()?.id
+      scanned += messages.size
+    }
+
+    return formatMessages(collectedMessages.slice(0, limit).reverse())
+  } catch (error) {
+    console.error('Error fetching user messages:', error)
     return []
   }
 }
