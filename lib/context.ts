@@ -68,7 +68,7 @@ export async function fetchThreadChain(
 export async function fetchUserMessages(
   client: Client,
   userId: string,
-  limit = 100,
+  limit = 200,
 ): Promise<FormattedMessage[]> {
   try {
     const channelId = GENERAL_CHANNEL_ID
