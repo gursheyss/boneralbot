@@ -147,7 +147,7 @@ export function generateGrokResponse(
             providerOptions: {
               xai: {
                 searchParameters: {
-                  mode: 'off',
+                  mode: 'on',
                   returnCitations: true,
                   maxSearchResults: 20,
                   sources: [
