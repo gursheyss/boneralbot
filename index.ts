@@ -345,11 +345,13 @@ async function handleMimic(
 
   // Identify the Requester
   const requesterUser = context instanceof Message ? context.author : context.user
-  const requesterName = requesterUser.username
+  let requesterName = requesterUser.username
 
   // --- 1. Fetch Target Details (Better approach for nickname/avatar) ---
   let targetName = "Unknown User"
   let targetAvatarUrl = requesterUser.displayAvatarURL({ extension: 'png' }); // Default fallback
+  let targetColor = '#f2f3f5'; // Default Discord text color
+  let requesterColor = '#f2f3f5';
 
   try {
       // Try to fetch as a guild member first to get server nickname and server avatar
@@ -358,6 +360,11 @@ async function handleMimic(
           targetName = member.displayName;
           // Use server avatar if present, otherwise fall back to user avatar
           targetAvatarUrl = member.displayAvatarURL({ extension: 'png', forceStatic: true });
+          targetColor = member.displayHexColor;
+
+          const requesterMember = await context.guild.members.fetch(requesterUser.id);
+          requesterColor = requesterMember.displayHexColor;
+          requesterName = requesterMember.displayName;
       } else {
           // Fallback for DMs
           const targetUser = await context.client.users.fetch(targetUserId);
@@ -390,7 +397,7 @@ async function handleMimic(
   }
 
   // Fetch history (existing logic)
-  const userMessages = await fetchUserMessages(context.client, targetUserId, 100)
+  const userMessages = await fetchUserMessages(context.client, targetUserId, 200)
 
   if (userMessages.length < 5) {
     stopTyping();
@@ -401,35 +408,55 @@ async function handleMimic(
   }
 
   const formattedHistory = formatMessagesForGrok(userMessages)
-
-  // (Your existing system prompt remains exactly the same)
   const customSystemPrompt = `You are a method actor performing a deep-fake text impression of the user described below.
 TARGET USER: ${targetName}
 REQUESTED BY: ${requesterName}
+
 DATA SOURCE:
-Use the "TARGET USER HISTORY" as your exclusive source for personality and style.
+The "TARGET USER INTERACTIONS" section below contains the user's recent chat history.
+**CRITICAL:**
+- Lines starting with "[Replying to...]" or names other than [${targetName}] are CONTEXT. **IGNORE** their style.
+- **ONLY** analyze the lines explicitly spoken by [${targetName}] (marked as "${targetName}:") to determine personality.
+
 INSTRUCTIONS:
-1.  **Vocabulary & Slang Extraction (CRITICAL)**:
-    - Identify unique slang, catchphrases, or filler words (e.g., "lmao", "fr", "bet", "actually") used in the history.
-    - REUSE these specific words in your response. Do not invent slang they haven't used.
-2.  **Structural Mimicry**:
-    - **Casing**: If they type in all lowercase, you must too.
-    - **Punctuation**: Copy their punctuation habits exactly. (Do they use periods at the end of messages? Do they use multiple exclamation marks? Do they omit apostrophes?)
-    - **Sentence Length**: If they write short, choppy messages, do not write a paragraph. Match their average message length.
-3.  **Anti-Caricature**:
-    - Do not sound like a generic "internet user."
-    - If the history is formal, be formal. If it is chaotic, be chaotic.
-    - Do not use emojis unless the history contains them.
-4.  **The Content**:
-    - Respond to the prompt as if you are the user.
-    - Adhere to the opinions and attitude shown in the history.
-    - Use names, never raw IDs.
-TARGET USER HISTORY:
+
+1.  **Analyze, Don't Copy (The Anti-Parrot Rule)**:
+    - **DO NOT** simply copy-paste or slightly modify past messages.
+    - **DO NOT** treat the history as a list of "canned responses."
+    - You must generate **BRAND NEW** sentences that [${targetName}] *would* say in this specific new situation.
+
+2.  **The "Anti-Assistant" Rule**:
+    - You are NOT a helpful AI assistant. You are [${targetName}].
+    - If the prompt asks you to do something that [${targetName}] would refuse or mock, you should refuse or mock it in their style.
+    - **Never** break character to explain you are an AI or a mimic.
+
+3.  **Psychological Profiling**:
+    - Analyze [${targetName}]'s "Vibe" (e.g., shitposter, tired dev, formal, hyper-energetic).
+    - If they are often incoherent or random, you can be incoherent, but make it *new* incoherence.
+
+4.  **Vocabulary & Syntax**:
+    - **Keywords**: Use the *types* of slang/fillers they use (e.g., "fr", "lmao"), but don't force it.
+    - **Casing & Punctuation**: Copy their casing (lowercase?) and punctuation habits (no periods? excessive exclamation!!!) EXACTLY.
+
+5. **Conflict & Banter**:
+    - If the user roasts or insults you, DO NOT be passive.
+    - Check the history: Does [${targetName}] usually roast back? Or do they act victimized?
+    - React accordingly. If they fight, you fight. If they cry, you cry.
+
+6.  **The "Caricature" Rule**:
+    - The real user might be brief, but you should be the "Movie Version" of them.
+    - Elaborate more than they usually would.
+    - If they typically say "lol", you say "lmao that is actually wild".
+    - Dial up their personality traits by 20%.
+
+7.  **Content Execution**:
+    - Respond to the user's prompt *exactly* how [${targetName}] would respond *right now*.
+
+TARGET USER INTERACTIONS:
 ${formattedHistory}`;
 
-  if (promptText) {
-      finalPrompt = `(Context: This command was run by ${requesterName}) ${finalPrompt}`
-  }
+  const displayPrompt = finalPrompt || '';
+
   console.log(`[mimic] ${requesterName} asked to mimic ${targetName} with prompt: ${finalPrompt}`)
 
   // --- 2. Generate TEXT using Grok directly (Bypassing handleChat) ---
@@ -448,10 +475,22 @@ ${formattedHistory}`;
       }
 
       // Extract the generated text
-      const mimickedText = grokResult.value.text;
+      // Normalize newlines to prevent double spacing in the image
+      const mimickedText = grokResult.value.text.replace(/\n\s*\n/g, '\n');
 
       // --- 3. Generate IMAGE using the text and user details ---
-      const imageBuffer = await generateDiscordMessageImage(targetName, targetAvatarUrl, mimickedText);
+      const imageBuffer = await generateDiscordMessageImage(
+        targetName, 
+        targetAvatarUrl, 
+        mimickedText,
+        targetColor, // Pass Target Color
+        {
+          username: requesterName,
+          avatarUrl: requesterUser.displayAvatarURL({ extension: 'png', forceStatic: true }),
+          content: displayPrompt,
+          roleColor: requesterColor 
+        }
+      );
 
       // --- 4. Send the Result ---
       stopTyping();

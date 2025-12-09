@@ -69,7 +69,7 @@ export async function fetchThreadChain(
 export async function fetchUserMessages(
   client: Client,
   userId: string,
-  limit = 100
+  limit = 300
 ): Promise<FormattedMessage[]> {
   try {
     const channel = await client.channels.fetch('1276716984192598112')
@@ -78,10 +78,10 @@ export async function fetchUserMessages(
       return []
     }
 
-    const collectedMessages: Message[] = []
+    const collectedMessages: FormattedMessage[] = []
     let lastId: string | undefined
 
-    const MAX_SCAN = 3000
+    const MAX_SCAN = 5000
     let scanned = 0
 
     while (collectedMessages.length < limit && scanned < MAX_SCAN) {
@@ -93,29 +93,65 @@ export async function fetchUserMessages(
       )) as unknown as Collection<string, Message>
       if (messages.size === 0) break
 
-      const userMessages = messages.filter((m) => {
+      const msgs = Array.from(messages.values())
+
+      for (let i = 0; i < msgs.length; i++) {
+        const msg = msgs[i]
+        if (!msg) continue
+
         // Basic checks
-        if (m.author.id !== userId) return false
-        if (m.content.trim().length === 0) return false
+        if (msg.author.id !== userId) continue
+        if (msg.content.trim().length === 0) continue
+        if (msg.author.bot) continue
 
         // Filter out bot mentions
-        if (client.user && m.mentions.has(client.user.id)) return false
+        if (client.user && msg.mentions.has(client.user.id)) continue
 
         // Filter out messages that are only links
-        const contentWithoutLinks = m.content
+        const contentWithoutLinks = msg.content
           .replace(/https?:\/\/[^\s]+/g, '')
           .trim()
-        if (contentWithoutLinks.length === 0) return false
+        if (contentWithoutLinks.length === 0) continue
 
-        return true
-      })
-      collectedMessages.push(...userMessages.values())
+        let context = ''
+
+        // 1. Check direct Discord Reply
+        if (msg.reference && msg.reference.messageId) {
+          const refMsg = messages.get(msg.reference.messageId)
+          if (refMsg) {
+            context = `[${
+              refMsg.author.displayName || refMsg.author.username
+            }]: ${refMsg.content}`
+          }
+        }
+        // 2. Fallback: Assume they are replying to the message immediately before them
+        else {
+          const prevMsg = msgs[i + 1]
+          if (prevMsg && prevMsg.author.id !== userId && !prevMsg.author.bot) {
+            context = `[${
+              prevMsg.author.displayName || prevMsg.author.username
+            }]: ${prevMsg.content}`
+          }
+        }
+
+        const formattedContent = context
+          ? `${context}\n[Response]: ${msg.content}`
+          : msg.content
+
+        collectedMessages.push({
+          author: msg.author.displayName || msg.author.username,
+          content: formattedContent,
+          timestamp: msg.createdAt
+        })
+
+        if (collectedMessages.length >= limit) break
+      }
 
       lastId = messages.last()?.id
       scanned += messages.size
     }
 
-    return formatMessages(collectedMessages.slice(0, limit).reverse())
+    return collectedMessages.reverse()
   } catch (error) {
     console.error('Error fetching user messages:', error)
     return []
@@ -144,6 +180,18 @@ export function formatMessagesForGrok(messages: FormattedMessage[]): string {
   return messages
     .map((msg) => {
       const timeAgo = formatDistanceToNow(msg.timestamp, { addSuffix: true })
+
+      // Handle messages with context (from fetchUserMessages)
+      if (msg.content.includes('\n[Response]: ')) {
+        const parts = msg.content.split('\n[Response]: ')
+        const context = parts[0] || ''
+        const response = parts[1] || ''
+        
+        const match = context.match(/^\[(.*?)\]:/)
+        const replyTo = match ? match[1] : 'someone'
+        return `[${timeAgo}]\n${context}\n[Replying to ${replyTo}] ${msg.author}: ${response}`
+      }
+
       return `[${timeAgo}] ${msg.author}: ${msg.content}`
     })
     .join('\n')

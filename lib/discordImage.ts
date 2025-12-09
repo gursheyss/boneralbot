@@ -32,7 +32,7 @@ const CANVAS_WIDTH = 700;
 const PADDING = 16;
 const AVATAR_SIZE = 40;
 const CONTENT_START_X = PADDING + AVATAR_SIZE + PADDING; 
-const TEXT_MAX_WIDTH = CANVAS_WIDTH - CONTENT_START_X - PADDING; // ~612px
+const TEXT_MAX_WIDTH = CANVAS_WIDTH - CONTENT_START_X - PADDING; 
 const LINE_HEIGHT = 24; 
 
 // --- Types ---
@@ -41,17 +41,28 @@ type Atom =
     | { type: 'emoji'; url: string; width: number; image?: Image }
     | { type: 'newline' };
 
+interface MessageData {
+    username: string;
+    avatarUrl: string;
+    content: string;
+    roleColor?: string;
+    timestamp?: string;
+}
+
+interface PreparedMessage {
+    data: MessageData;
+    atoms: Atom[];
+    lines: Atom[][];
+    height: number;
+}
+
 /**
  * Tokenizes the string into atomic parts.
- * Now strictly handles newlines vs spaces.
  */
 function tokenizeContent(text: string, ctx: any): Atom[] {
     const atoms: Atom[] = [];
-    
-    // Clean input: remove CR, keep LF
     const cleanText = text.replace(/\r/g, '');
 
-    // 1. Identify Emojis (Custom & Twemoji)
     const customEmojiRegex = /<(a)?:(\w+):(\d+)>/g;
     const customEntities = [];
     let match;
@@ -71,24 +82,18 @@ function tokenizeContent(text: string, ctx: any): Atom[] {
 
     const allEmojis = [...customEntities, ...twemojiEntities].sort((a, b) => a.index - b.index);
 
-    // Scan string
     let cursor = 0;
-
     const pushTextAtoms = (substring: string) => {
-        // Split by newline, preserving it
         const lines = substring.split(/(\n)/g);
         for (const line of lines) {
             if (line === '') continue;
-            
             if (line === '\n') {
                 atoms.push({ type: 'newline' });
             } else {
-                // Split words by space, preserving spaces
                 const words = line.split(/( )/g);
                 for (const word of words) {
                     if (word === '') continue;
                     if (word === ' ') {
-                        // Explicit space atom
                         const w = ctx.measureText(' ').width || 4;
                         atoms.push({ type: 'text', content: ' ', width: w });
                     } else {
@@ -115,28 +120,16 @@ function tokenizeContent(text: string, ctx: any): Atom[] {
     return atoms;
 }
 
-export async function generateDiscordMessageImage(
-    username: string, 
-    avatarUrl: string, 
-    messageContent: string,
-    roleColor: string = COLORS.TEXT_NAME_DEFAULT 
-): Promise<Buffer> {
+function prepareMessageLayout(data: MessageData, ctx: any): PreparedMessage {
+    let messageContent = data.content || " ";
     
-    if (!messageContent) messageContent = " ";
-
-    const tempCanvas = createCanvas(CANVAS_WIDTH, 100);
-    const ctx = tempCanvas.getContext('2d');
-    ctx.font = REGULAR_FONT;
-
-    // 1. Tokenize
     let atoms = tokenizeContent(messageContent, ctx);
 
-    // We iterate through all atoms. If we find a Newline, we look at neighbors.
+    // Clean up spaces around newlines
     for (let i = 0; i < atoms.length; i++) {
         const currentAtom = atoms[i];
         if (!currentAtom || currentAtom.type !== 'newline') continue;
 
-        // 1. Scan backwards skipping whitespace
         let prevIndex = i - 1;
         while (prevIndex >= 0) {
             const prevAtom = atoms[prevIndex];
@@ -147,7 +140,6 @@ export async function generateDiscordMessageImage(
             }
         }
 
-        // 2. Scan forwards skipping whitespace
         let nextIndex = i + 1;
         while (nextIndex < atoms.length) {
             const nextAtom = atoms[nextIndex];
@@ -161,7 +153,6 @@ export async function generateDiscordMessageImage(
         const prev = atoms[prevIndex];
         const next = atoms[nextIndex];
 
-        // 3. Check if sandwiched between Emojis
         if (prev && next && prev.type === 'emoji' && next.type === 'emoji') {
             atoms[i] = { type: 'text', content: ' ', width: 4 };
             for (let k = prevIndex + 1; k < nextIndex; k++) {
@@ -170,20 +161,11 @@ export async function generateDiscordMessageImage(
         }
     }
 
-    // 2. Load Images
-    await Promise.all(atoms.map(async (atom) => {
-        if (atom.type === 'emoji') {
-            try { atom.image = await loadImage(atom.url); } catch(e) {}
-        }
-    }));
-
-    // 3. Layout (Line Wrapping)
     const lines: Atom[][] = [];
     let currentLine: Atom[] = [];
     let currentWidth = 0;
 
     for (const atom of atoms) {
-        // Explicit Newline
         if (atom.type === 'newline') {
             lines.push(currentLine);
             currentLine = [];
@@ -194,10 +176,7 @@ export async function generateDiscordMessageImage(
         const atomWidth = atom.type === 'text' ? atom.width : 24; 
 
         if (currentWidth + atomWidth > TEXT_MAX_WIDTH && currentLine.length > 0) {
-            // Handle space at end of line (ignore it)
-            if (atom.type === 'text' && atom.content === ' ') {
-                continue; 
-            }
+            if (atom.type === 'text' && atom.content === ' ') continue; 
             lines.push(currentLine);
             currentLine = [atom];
             currentWidth = atomWidth;
@@ -208,67 +187,168 @@ export async function generateDiscordMessageImage(
     }
     if (currentLine.length > 0) lines.push(currentLine);
 
-    // 4. Render
-    // Calculate Height
+    // --- HEIGHT CALCULATION UPDATE ---
     const contentHeight = lines.length * LINE_HEIGHT;
-    const canvasHeight = Math.max(AVATAR_SIZE + (PADDING * 2), PADDING + 20 + 5 + contentHeight + PADDING);
     
-    const canvas = createCanvas(CANVAS_WIDTH, canvasHeight);
-    const finalCtx = canvas.getContext('2d');
+    // We remove the trailing padding to tighten the stack.
+    // PADDING (top) + 21 (gap to text start) + contentHeight
+    const textBlockHeight = PADDING + 21 + contentHeight;
+    const avatarBlockHeight = PADDING + AVATAR_SIZE;
 
-    // Draw Background
-    finalCtx.fillStyle = COLORS.BACKGROUND;
-    finalCtx.fillRect(0, 0, CANVAS_WIDTH, canvasHeight);
+    const blockHeight = Math.max(avatarBlockHeight, textBlockHeight);
 
-    // Draw Avatar
+    return { data, atoms, lines, height: blockHeight };
+}
+
+async function drawMessage(
+    ctx: any, 
+    prepared: PreparedMessage, 
+    yOffset: number
+) {
+    const { data, lines } = prepared;
+    
     try {
-        const cleanAvatarUrl = avatarUrl.replace(/\.(webp|gif)$/i, '.png');
+        const cleanAvatarUrl = data.avatarUrl.replace(/\.(webp|gif)$/i, '.png');
         const avatarImage = await loadImage(cleanAvatarUrl);
-        finalCtx.save();
-        finalCtx.beginPath();
-        finalCtx.arc(PADDING + (AVATAR_SIZE / 2), PADDING + (AVATAR_SIZE / 2), AVATAR_SIZE / 2, 0, Math.PI * 2, true);
-        finalCtx.closePath();
-        finalCtx.clip();
-        finalCtx.drawImage(avatarImage, PADDING, PADDING, AVATAR_SIZE, AVATAR_SIZE);
-        finalCtx.restore();
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(PADDING + (AVATAR_SIZE / 2), yOffset + PADDING + (AVATAR_SIZE / 2), AVATAR_SIZE / 2, 0, Math.PI * 2, true);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(avatarImage, PADDING, yOffset + PADDING, AVATAR_SIZE, AVATAR_SIZE);
+        ctx.restore();
     } catch (e) {
-        finalCtx.fillStyle = '#5865f2';
-        finalCtx.beginPath();
-        finalCtx.arc(PADDING + (AVATAR_SIZE / 2), PADDING + (AVATAR_SIZE / 2), AVATAR_SIZE / 2, 0, Math.PI * 2, true);
-        finalCtx.fill();
+        ctx.fillStyle = '#5865f2';
+        ctx.beginPath();
+        ctx.arc(PADDING + (AVATAR_SIZE / 2), yOffset + PADDING + (AVATAR_SIZE / 2), AVATAR_SIZE / 2, 0, Math.PI * 2, true);
+        ctx.fill();
     }
 
-    // Draw Header
-    finalCtx.font = BOLD_FONT;
-    finalCtx.fillStyle = roleColor;
-    finalCtx.fillText(username, CONTENT_START_X, PADDING + 16);
+    ctx.font = BOLD_FONT;
+    ctx.fillStyle = data.roleColor || COLORS.TEXT_NAME_DEFAULT;
+    ctx.fillText(data.username, CONTENT_START_X, yOffset + PADDING + 16);
 
-    const usernameWidth = finalCtx.measureText(username).width;
-    finalCtx.font = TIMESTAMP_FONT;
-    finalCtx.fillStyle = COLORS.TEXT_MUTED;
-    finalCtx.fillText("Today at 4:20 PM", CONTENT_START_X + usernameWidth + 8, PADDING + 16);
+    const usernameWidth = ctx.measureText(data.username).width;
+    ctx.font = TIMESTAMP_FONT;
+    ctx.fillStyle = COLORS.TEXT_MUTED;
+    ctx.fillText(data.timestamp || "Today at 4:20 PM", CONTENT_START_X + usernameWidth + 8, yOffset + PADDING + 16);
 
-    // Draw Content
-    finalCtx.font = REGULAR_FONT;
-    finalCtx.fillStyle = COLORS.TEXT_NORMAL;
+    ctx.font = REGULAR_FONT;
+    ctx.fillStyle = COLORS.TEXT_NORMAL;
 
-    let currentY = PADDING + 21;
+    let currentY = yOffset + PADDING + 21;
     
     for (const line of lines) {
         let currentX = CONTENT_START_X;
-        
         for (const atom of line) {
             if (atom.type === 'text') {
-                // Draw text
-                finalCtx.fillText(atom.content, currentX, currentY + 16); 
+                ctx.fillText(atom.content, currentX, currentY + 16); 
                 currentX += atom.width;
             } else if (atom.type === 'emoji' && atom.image) {
-                finalCtx.drawImage(atom.image, currentX, currentY - 2, 22, 22);
+                ctx.drawImage(atom.image, currentX, currentY - 2, 22, 22);
                 currentX += 24;
             }
         }
         currentY += LINE_HEIGHT;
     }
+}
+
+export async function generateDiscordMessageImage(
+    username: string, 
+    avatarUrl: string, 
+    messageContent: string,
+    roleColor: string = COLORS.TEXT_NAME_DEFAULT,
+    requesterData?: { 
+        username: string; 
+        avatarUrl: string; 
+        content: string; 
+        roleColor?: string; 
+    }
+): Promise<Buffer> {
+    
+    const tempCanvas = createCanvas(CANVAS_WIDTH, 100);
+    const ctx = tempCanvas.getContext('2d');
+    ctx.font = REGULAR_FONT;
+
+    const messagesToRender: PreparedMessage[] = [];
+
+    if (requesterData) {
+        messagesToRender.push(prepareMessageLayout({
+            username: requesterData.username,
+            avatarUrl: requesterData.avatarUrl,
+            content: requesterData.content,
+            roleColor: requesterData.roleColor || COLORS.TEXT_NAME_DEFAULT,
+            timestamp: "Today at 4:19 PM"
+        }, ctx));
+    }
+
+    messagesToRender.push(prepareMessageLayout({
+        username,
+        avatarUrl,
+        content: messageContent,
+        roleColor,
+        timestamp: "Today at 4:20 PM"
+    }, ctx));
+
+    const allAtoms = messagesToRender.flatMap(m => m.atoms);
+    await Promise.all(allAtoms.map(async (atom) => {
+        if (atom.type === 'emoji') {
+            try { atom.image = await loadImage(atom.url); } catch(e) {}
+        }
+    }));
+
+    // Add padding to height
+    const totalHeight = messagesToRender.reduce((sum, msg) => sum + msg.height, 0) + PADDING;
+
+    const canvas = createCanvas(CANVAS_WIDTH, totalHeight);
+    const finalCtx = canvas.getContext('2d');
+
+    // 1. Draw Background
+    finalCtx.fillStyle = COLORS.BACKGROUND;
+    finalCtx.fillRect(0, 0, CANVAS_WIDTH, totalHeight);
+
+    // 2. Draw Messages
+    let currentYOffset = 0;
+    for (const msg of messagesToRender) {
+        await drawMessage(finalCtx, msg, currentYOffset);
+        currentYOffset += msg.height;
+    }
+
+    // 3. [NEW] Draw Rounded Border
+    // Discord images have rounded corners (~8px). 
+    // We inset the border and round it so it looks like a native "card" and doesn't get cut.
+    
+    finalCtx.strokeStyle = '#202225'; 
+    finalCtx.lineWidth = 4; 
+    
+    // Inset by 2px (half of 4px) so the stroke is fully inside the canvas (0 to 4px)
+    const x = 2;
+    const y = 2;
+    const w = CANVAS_WIDTH - 4;
+    const h = totalHeight - 4;
+    const radius = 8; // Matches Discord's typical image border radius
+
+    finalCtx.beginPath();
+    
+    // Check if roundRect is supported (modern canvas), otherwise use fallback
+    // @ts-ignore - roundRect might not be in the type definition yet
+    if (finalCtx.roundRect) {
+        // @ts-ignore
+        finalCtx.roundRect(x, y, w, h, radius);
+    } else {
+        // Manual rounded rect drawing
+        finalCtx.moveTo(x + radius, y);
+        finalCtx.lineTo(x + w - radius, y);
+        finalCtx.quadraticCurveTo(x + w, y, x + w, y + radius);
+        finalCtx.lineTo(x + w, y + h - radius);
+        finalCtx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+        finalCtx.lineTo(x + radius, y + h);
+        finalCtx.quadraticCurveTo(x, y + h, x, y + h - radius);
+        finalCtx.lineTo(x, y + radius);
+        finalCtx.quadraticCurveTo(x, y, x + radius, y);
+    }
+    
+    finalCtx.stroke();
 
     return canvas.toBuffer('image/png');
 }
