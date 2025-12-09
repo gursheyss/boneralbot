@@ -65,99 +65,145 @@ export async function fetchThreadChain(
   }
 }
 
-/**
- * Fetches the last N messages from a specific user in the general channel.
- */
 export async function fetchUserMessages(
   client: Client,
   userId: string,
-  limit = 300
+  limit = 100,
 ): Promise<FormattedMessage[]> {
   try {
-    const channel = await client.channels.fetch(GENERAL_CHANNEL_ID)
+    const channelId = GENERAL_CHANNEL_ID
+    const channel = await client.channels.fetch(channelId)
+    
+    // Type guard: ensure channel exists and has messages
     if (!channel || !channel.isTextBased()) {
       console.warn('General chat channel not found or not text-based')
       return []
     }
 
-    const collectedMessages: FormattedMessage[] = []
+    console.log(`[context] Starting fetch for user ${userId} in ${channelId}...`)
+
+    const collectedBlocks: FormattedMessage[] = []
     let lastId: string | undefined
 
     const MAX_SCAN = 5000
     let scanned = 0
 
-    while (collectedMessages.length < limit && scanned < MAX_SCAN) {
-      const options: any = { limit: 100 }
+    let currentBurst: Message[] = []
+
+    while (collectedBlocks.length < limit && scanned < MAX_SCAN) {
+      // 1. Explicitly type options to ensure we get a Collection
+      const options: { limit: number; before?: string } = { limit: 100 }
       if (lastId) options.before = lastId
 
-      const messages = (await channel.messages.fetch(
-        options
-      )) as unknown as Collection<string, Message>
+      // 2. Cast the result to Collection<string, Message> to fix "Property size does not exist"
+      const messages = (await channel.messages.fetch(options)) as Collection<string, Message>
+      
       if (messages.size === 0) break
 
       const msgs = Array.from(messages.values())
 
       for (let i = 0; i < msgs.length; i++) {
         const msg = msgs[i]
+        
         if (!msg) continue
-
-        // Basic checks
-        if (msg.author.id !== userId) continue
-        if (msg.content.trim().length === 0) continue
-        if (msg.author.bot) continue
-
-        // Filter out bot mentions
+        if (msg.author.bot || !msg.content.trim()) continue
+        
+        // Filter out bot mentions (using client if available)
         if (client.user && msg.mentions.has(client.user.id)) continue
 
-        // Filter out messages that are only links
-        const contentWithoutLinks = msg.content
-          .replace(/https?:\/\/[^\s]+/g, '')
-          .trim()
-        if (contentWithoutLinks.length === 0) continue
-
-        let context = ''
-
-        // 1. Check direct Discord Reply
-        if (msg.reference && msg.reference.messageId) {
-          const refMsg = messages.get(msg.reference.messageId)
-          if (refMsg) {
-            context = `[${
-              refMsg.author.displayName || refMsg.author.username
-            }]: ${refMsg.content}`
-          }
+        if (msg.author.id === userId) {
+            // Burst Logic: Group messages if they are close in time
+            const lastMsgInBurst = currentBurst[currentBurst.length - 1]
+            
+            // Note: msgs are usually ordered newest->oldest. 
+            // We iterate 0..N (Newest..Oldest).
+            // So 'lastMsgInBurst' is actually NEWER than 'msg'.
+            
+            if (lastMsgInBurst && (lastMsgInBurst.createdTimestamp - msg.createdTimestamp) < 2 * 60 * 1000) {
+                // Add to current burst
+                currentBurst.push(msg)
+            } else {
+                // Gap is too big (or this is the first message found)
+                // Push the PREVIOUS completed burst to results
+                if (currentBurst.length > 0) {
+                    await pushBurst(currentBurst, msgs, collectedBlocks)
+                }
+                // Start a new burst
+                currentBurst = [msg]
+            }
         }
-        // 2. Fallback: Assume they are replying to the message immediately before them
-        else {
-          const prevMsg = msgs[i + 1]
-          if (prevMsg && prevMsg.author.id !== userId && !prevMsg.author.bot) {
-            context = `[${
-              prevMsg.author.displayName || prevMsg.author.username
-            }]: ${prevMsg.content}`
-          }
-        }
-
-        const formattedContent = context
-          ? `${context}\n[Response]: ${msg.content}`
-          : msg.content
-
-        collectedMessages.push({
-          author: msg.author.displayName || msg.author.username,
-          content: formattedContent,
-          timestamp: msg.createdAt
-        })
-
-        if (collectedMessages.length >= limit) break
       }
 
       lastId = messages.last()?.id
       scanned += messages.size
     }
 
-    return collectedMessages.reverse()
+    // Push any remaining burst
+    if (currentBurst.length > 0) {
+         await pushBurst(currentBurst, [], collectedBlocks)
+    }
+
+    return collectedBlocks.reverse()
   } catch (error) {
     console.error('Error fetching user messages:', error)
     return []
   }
+}
+
+// [NEW] Helper to clean garbage from Discord messages
+function cleanDiscordText(content: string): string {
+  return content
+    .replace(/<@!?(\d+)>/g, '@User') 
+    .replace(/<@&(\d+)>/g, '@Role')
+    .replace(/<a?:(\w+):\d+>/g, ':$1:')
+    .replace(/https?:\/\/(tenor|cdn\.discordapp|media\.discordapp)[^\s]+/g, '[Image/Gif]')
+    .trim();
+}
+
+// [NEW] Helper to format and push a burst of messages
+async function pushBurst(
+    burst: Message[], 
+    allMessages: Message[], 
+    results: FormattedMessage[]
+) {
+    if (burst.length === 0) return;
+
+    // Reorder burst: Oldest -> Newest (Chronological)
+    burst.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+    
+    // Fix: Ensure oldestMsg exists (TypeScript check)
+    const oldestMsg = burst[0];
+    if (!oldestMsg) return;
+
+    // Combine content
+    const fullContent = burst.map(m => cleanDiscordText(m.content)).filter(c => c.length > 0).join('\n');
+    if (!fullContent) return;
+
+    // Try to find context (What triggered the start of this burst?)
+    let context = '';
+    
+    if (oldestMsg.reference?.messageId) {
+        try {
+            // Try to find in current batch
+            let refMsg = allMessages.find(m => m.id === oldestMsg.reference!.messageId);
+            // If not found (and we really want it), we could fetch it, but skipping for speed
+            
+            if (refMsg) {
+                const name = refMsg.member?.displayName || refMsg.author.username;
+                context = `[${name}]: ${cleanDiscordText(refMsg.content)}`;
+            }
+        } catch {}
+    }
+
+    const formatted = context 
+        ? `${context}\n[Replying to above] ${fullContent}`
+        : fullContent;
+
+    results.push({
+        author: oldestMsg.member?.displayName || oldestMsg.author.username,
+        content: formatted,
+        timestamp: oldestMsg.createdAt
+    });
 }
 
 /**
@@ -175,28 +221,28 @@ function formatMessages(messages: Message[]): FormattedMessage[] {
  * Converts formatted messages into a string suitable for Grok's prompt context.
  */
 export function formatMessagesForGrok(messages: FormattedMessage[]): string {
-  if (messages.length === 0) {
-    return ''
-  }
+  if (messages.length === 0) return ''
 
   return messages
     .map((msg) => {
-      const timeAgo = formatDistanceToNow(msg.timestamp, { addSuffix: true })
-
-      // Handle messages with context (from fetchUserMessages)
-      if (msg.content.includes('\n[Response]: ')) {
-        const parts = msg.content.split('\n[Response]: ')
-        const context = parts[0] || ''
-        const response = parts[1] || ''
-        
-        const match = context.match(/^\[(.*?)\]:/)
-        const replyTo = match ? match[1] : 'someone'
-        return `[${timeAgo}]\n${context}\n[Replying to ${replyTo}] ${msg.author}: ${response}`
+      // Logic to handle our new "Burst" format
+      // If the content has "[Replying to...]" split it up
+      if (msg.content.includes('\n[Replying to above] ')) {
+         const parts = msg.content.split('\n[Replying to above] ')
+         const context = parts[0] // "[User]: Hello"
+         const reply = parts[1]   // "burst message\nline 2"
+         
+         // Format:
+         // CONTEXT: [User]: Hello
+         // TARGET: burst message
+         // line 2
+         return `CONTEXT: ${context}\n ${msg.author}: ${reply}`
       }
 
-      return `[${timeAgo}] ${msg.author}: ${msg.content}`
+      // No context
+      return ` ${msg.author}: ${msg.content}`
     })
-    .join('\n')
+    .join('\n\n') // Double spacing between interaction blocks
 }
 
 export interface FetchMessagesOptions {
