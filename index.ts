@@ -399,6 +399,10 @@ async function handleMimic(
   // Fetch history (existing logic)
   const userMessages = await fetchUserMessages(context.client, targetUserId, 200)
 
+  userMessages.forEach((msg) => {
+    msg.author = targetName;
+  });
+
   if (userMessages.length < 5) {
     stopTyping();
     const msg = "I couldn't find enough recent messages from that user in general chat to mimic them."
