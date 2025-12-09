@@ -1,6 +1,8 @@
 import { Client, Collection, type Message } from 'discord.js'
 import { formatDistanceToNow } from 'date-fns'
 
+const GENERAL_CHANNEL_ID = '1276716984192598112'
+
 export interface FormattedMessage {
   author: string
   content: string
@@ -72,7 +74,7 @@ export async function fetchUserMessages(
   limit = 300
 ): Promise<FormattedMessage[]> {
   try {
-    const channel = await client.channels.fetch('1276716984192598112')
+    const channel = await client.channels.fetch(GENERAL_CHANNEL_ID)
     if (!channel || !channel.isTextBased()) {
       console.warn('General chat channel not found or not text-based')
       return []

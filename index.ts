@@ -396,8 +396,8 @@ async function handleMimic(
     finalPrompt = randomScenarios[Math.floor(Math.random() * randomScenarios.length)]
   }
 
-  // Fetch history (existing logic)
-  const userMessages = await fetchUserMessages(context.client, targetUserId, 200)
+  // Fetch history
+  const userMessages = await fetchUserMessages(context.client, targetUserId, 300)
 
   userMessages.forEach((msg) => {
     msg.author = targetName;
@@ -454,7 +454,11 @@ INSTRUCTIONS:
     - If they typically say "lol", you say "lmao that is actually wild".
     - Dial up their personality traits by 20%.
 
-7.  **Content Execution**:
+7.  **NO LABELS**: 
+    - Output **ONLY** the raw message content. 
+    - **DO NOT** prefix your response with "${targetName}:" or any other label.
+
+8.  **Content Execution**:
     - Respond to the user's prompt *exactly* how [${targetName}] would respond *right now*.
 
 TARGET USER INTERACTIONS:
@@ -464,7 +468,7 @@ ${formattedHistory}`;
 
   console.log(`[mimic] ${requesterName} asked to mimic ${targetName} with prompt: ${finalPrompt}`)
 
-  // --- 2. Generate TEXT using Grok directly (Bypassing handleChat) ---
+  //
   try {
       // We call generateGrokResponse directly instead of going through handleChat
       const grokResult = await generateGrokResponse({
