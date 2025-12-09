@@ -6,7 +6,8 @@ import {
   fetchMessagesFromLastHour,
   fetchConversationContext,
   truncateMessagesForContext,
-  formatMessagesForGrok
+  formatMessagesForGrok,
+  fetchUserMessages
 } from './context.ts'
 
 export interface ToolContext {
@@ -91,6 +92,26 @@ export function createTools(ctx: ToolContext) {
 
         return {
           messageCount: truncated.length,
+          messages: formatted
+        }
+      }
+    }),
+
+    mimicUser: tool({
+      description:
+        'Fetch recent messages from a specific user to understand their style. Use this when asked to mimic or impersonate a user.',
+      inputSchema: z.object({
+        userId: z.string().describe('The ID of the user to mimic')
+      }),
+      execute: async ({ userId }: { userId: string }) => {
+        console.log('[tools:mimicUser] called for:', userId)
+        const messages = await fetchUserMessages(
+          ctx.discordMessage.client,
+          userId,
+          50
+        )
+        const formatted = formatMessagesForGrok(messages)
+        return {
           messages: formatted
         }
       }

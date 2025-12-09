@@ -143,6 +143,7 @@ export function generateGrokResponse(
             prompt: userPrompt,
             tools: input.tools,
             stopWhen: input.tools ? stepCountIs(3) : stepCountIs(1),
+            temperature: 0.7,
             providerOptions: {
               xai: {
                 searchParameters: {
