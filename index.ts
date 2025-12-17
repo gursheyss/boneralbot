@@ -126,6 +126,65 @@ client.on(Events.MessageCreate, async (message) => {
     return
   }
 
+  // Handle "@bot image <prompt>" - direct image generation with nano banana pro
+  if (prompt.toLowerCase().startsWith('image ')) {
+    const imagePrompt = prompt.slice(6).trim() // Remove "image " prefix
+    if (!imagePrompt) {
+      await message.reply('please provide a prompt after "image"')
+      return
+    }
+
+    const stopTyping = startTyping(message.channel)
+    try {
+      const result = await generateImage(
+        imagePrompt,
+        [], // No reference images for text-to-image
+        message.author.id,
+        message.author.username
+      )
+
+      stopTyping()
+
+      if (result.isErr()) {
+        console.error('Image generation failed:', result.error)
+        await message.reply(`failed to generate image: ${result.error.message}`)
+        return
+      }
+
+      const { nanoBanana } = result.value
+
+      if (nanoBanana.isErr()) {
+        console.error('Nano-banana failed:', nanoBanana.error)
+        await message.reply(`failed to generate image: ${nanoBanana.error.message}`)
+        return
+      }
+
+      const sent = await message.reply({
+        files: [
+          new AttachmentBuilder(nanoBanana.value, {
+            name: 'generated.jpg'
+          })
+        ],
+        components: [buildRetryRow()]
+      })
+
+      // Store context for retry
+      grokContext.set(sent.id, {
+        prompt: imagePrompt,
+        attachmentUrls: [],
+        contextMessages: [],
+        userId: message.author.id,
+        username: message.author.username
+      })
+      return
+    } catch (e) {
+      console.error('Image generation error:', e)
+      await message.reply('An error occurred while generating the image')
+      stopTyping()
+      return
+    }
+  }
+
   if (!prompt) {
     await message.reply('please include a message or question when you mention me')
     return
